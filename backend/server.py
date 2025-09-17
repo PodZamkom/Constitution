@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -152,9 +152,52 @@ except ImportError as e:
     logger.warning(f"Whisper not available: {e}")
     WHISPER_AVAILABLE = False
 
+# OpenAI Voice Mode integration
+VOICE_MODE_AVAILABLE = False
+try:
+    from emergentintegrations.llm.openai import OpenAIChatRealtime
+    
+    # Initialize OpenAI Voice Mode
+    VOICE_CHAT = None
+    
+    @app.on_event("startup")
+    async def load_voice_mode():
+        global VOICE_CHAT, VOICE_MODE_AVAILABLE
+        try:
+            api_key = os.environ.get("OPENAI_API_KEY")
+            if api_key:
+                logger.info("Initializing OpenAI Voice Mode...")
+                VOICE_CHAT = OpenAIChatRealtime(api_key=api_key)
+                
+                # Register voice mode router
+                voice_router = APIRouter()
+                OpenAIChatRealtime.register_openai_realtime_router(voice_router, VOICE_CHAT)
+                app.include_router(voice_router, prefix="/api/voice")
+                
+                VOICE_MODE_AVAILABLE = True
+                logger.info("OpenAI Voice Mode initialized successfully")
+            else:
+                logger.warning("OpenAI API key not found, Voice Mode unavailable")
+        except Exception as e:
+            logger.error(f"Failed to initialize Voice Mode: {e}")
+            VOICE_MODE_AVAILABLE = False
+
+except ImportError as e:
+    logger.warning(f"OpenAI Voice Mode not available: {e}")
+    VOICE_MODE_AVAILABLE = False
+
 @app.get("/")
 async def root():
     return {"message": "AI-ассистент по Конституции Республики Беларусь"}
+
+@app.get("/api/capabilities")
+async def get_capabilities():
+    """Get available capabilities"""
+    return {
+        "whisper_available": WHISPER_AVAILABLE,
+        "voice_mode_available": VOICE_MODE_AVAILABLE,
+        "llm_available": INTEGRATION_AVAILABLE
+    }
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
