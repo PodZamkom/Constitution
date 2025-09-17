@@ -225,6 +225,17 @@ try:
                         
                         logger.info(f"Creating Алеся session with voice: {voice}")
                         
+                        # Debug: показать что отправляем в OpenAI
+                        session_payload = {
+                            "model": model,
+                            "voice": voice,
+                            "instructions": aleya_instructions
+                        }
+                        
+                        logger.info(f"Sending to OpenAI API: model={model}, voice={voice}")
+                        logger.info(f"Instructions length: {len(aleya_instructions)} characters")
+                        logger.info(f"Instructions preview: {aleya_instructions[:100]}...")
+                        
                         # Create session with custom instructions
                         import aiohttp
                         async with aiohttp.ClientSession() as session:
@@ -234,20 +245,19 @@ try:
                                     "Authorization": f"Bearer {VOICE_CHAT.api_key}",
                                     "Content-Type": "application/json",
                                 },
-                                json={
-                                    "model": model,
-                                    "voice": voice,
-                                    "instructions": aleya_instructions
-                                }
+                                json=session_payload
                             ) as response:
+                                response_text = await response.text()
+                                logger.info(f"OpenAI API response status: {response.status}")
+                                logger.info(f"OpenAI API response: {response_text[:200]}...")
+                                
                                 if response.status == 200:
-                                    session_data = await response.json()
+                                    session_data = json.loads(response_text)
                                     logger.info("Алеся Voice Mode session created with Constitution instructions")
                                     return session_data
                                 else:
-                                    error_text = await response.text()
-                                    logger.error(f"Session creation failed: {response.status} - {error_text}")
-                                    raise HTTPException(status_code=response.status, detail=error_text)
+                                    logger.error(f"Session creation failed: {response.status} - {response_text}")
+                                    raise HTTPException(status_code=response.status, detail=response_text)
                         
                     except HTTPException:
                         raise
