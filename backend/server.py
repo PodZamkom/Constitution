@@ -122,13 +122,13 @@ def parse_from_mongo(item):
         del item['_id']
     return item
 
-# Install emergentintegrations first
+# OpenAI integration
 try:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    import openai
     INTEGRATION_AVAILABLE = True
 except ImportError:
     INTEGRATION_AVAILABLE = False
-    print("Warning: emergentintegrations not installed")
+    print("Warning: openai not installed")
 
 # Whisper integration
 WHISPER_AVAILABLE = False
@@ -358,19 +358,26 @@ async def chat(request: ChatRequest):
             # Fallback response if integration not available
             ai_response = f"Привет! Меня зовут Алеся. Я специалист по Конституции Республики Беларусь редакции 2022 года. Вы спросили: '{request.message}'. К сожалению, интеграция с LLM временно недоступна, но я готова помочь вам с вопросами по Конституции Беларуси, как только сервис будет восстановлен."
         else:
-            # Initialize LLM chat
+            # Initialize OpenAI client
             api_key = os.environ.get("OPENAI_API_KEY")
             if not api_key:
                 ai_response = f"Привет! Меня зовут Алеся. Я специалист по Конституции Республики Беларусь редакции 2022 года. Вы спросили: '{request.message}'. К сожалению, API ключ OpenAI не настроен, но я готова помочь вам с вопросами по Конституции Беларуси, как только сервис будет настроен."
             else:
-                chat = LlmChat(
-                    api_key=api_key,
-                    session_id=request.session_id,
-                    system_message=SYSTEM_PROMPT
-                ).with_model("openai", "gpt-4")
-                
-                user_msg = UserMessage(text=request.message)
-                ai_response = await chat.send_message(user_msg)
+                try:
+                    client = openai.OpenAI(api_key=api_key)
+                    response = client.chat.completions.create(
+                        model="gpt-4",
+                        messages=[
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user", "content": request.message}
+                        ],
+                        max_tokens=1000,
+                        temperature=0.7
+                    )
+                    ai_response = response.choices[0].message.content
+                except Exception as e:
+                    logger.error(f"OpenAI API error: {e}")
+                    ai_response = f"Привет! Меня зовут Алеся. Я специалист по Конституции Республики Беларусь редакции 2022 года. Вы спросили: '{request.message}'. К сожалению, произошла ошибка при обращении к OpenAI API: {str(e)}"
 
         # Save assistant response (if MongoDB available)
         if db:
