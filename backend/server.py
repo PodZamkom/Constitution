@@ -255,11 +255,44 @@ try:
                 
                 @voice_router.post("/realtime/negotiate")
                 async def negotiate_aleya_connection(request: Request):
-                    """Handle WebRTC negotiation for Алеся"""
+                    """Handle WebRTC negotiation for Алеся using client_secret from the created session"""
                     try:
-                        sdp_offer = await request.body()
-                        sdp_answer = await VOICE_CHAT.negotiate_connection(sdp_offer.decode())
-                        return JSONResponse(content={"sdp": sdp_answer})
+                        # Read SDP offer from request body
+                        sdp_offer_bytes = await request.body()
+                        sdp_offer = sdp_offer_bytes.decode()
+
+                        # Read client_secret from Authorization header (Bearer <client_secret>)
+                        auth_header = request.headers.get("Authorization", "")
+                        client_secret = None
+                        if auth_header.lower().startswith("bearer "):
+                            client_secret = auth_header.split(" ", 1)[1].strip()
+
+                        if not client_secret:
+                            raise HTTPException(status_code=400, detail="Missing client_secret in Authorization header")
+
+                        # Optional model header to be explicit; default to same as session creation
+                        model = request.headers.get("X-OpenAI-Model", "gpt-4o-realtime-preview-2024-12-17")
+
+                        # Forward SDP offer to OpenAI Realtime using the client_secret so that
+                        # the session inherits the Алеся instructions configured at session creation
+                        import aiohttp
+                        url = f"https://api.openai.com/v1/realtime?model={model}"
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(
+                                url,
+                                data=sdp_offer,
+                                headers={
+                                    "Authorization": f"Bearer {client_secret}",
+                                    "Content-Type": "application/sdp",
+                                },
+                            ) as resp:
+                                answer_sdp = await resp.text()
+                                if resp.status != 200:
+                                    logger.error(f"OpenAI negotiate failed: {resp.status} - {answer_sdp[:200]}...")
+                                    raise HTTPException(status_code=resp.status, detail=answer_sdp)
+                                return JSONResponse(content={"sdp": answer_sdp})
+                    except HTTPException:
+                        raise
                     except Exception as e:
                         logger.error(f"Negotiation error: {e}")
                         raise HTTPException(status_code=500, detail=str(e))

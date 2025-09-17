@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="AI-ассистент по Конституции Республики Беларусь" />
+    <title>AI-ассистент по Конституции Республики Беларусь</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .app {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+        
+        .app-header {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            text-align: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        
+        .symbols {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .flag, .coat-of-arms {
+            height: 40px;
+            width: auto;
+            border-radius: 4px;
+        }
+        
+        .title {
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+            margin: 0;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        
+        .mode-toggle {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .mode-btn {
+            padding: 8px 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .mode-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .mode-btn.active {
+            background: rgba(255, 255, 255, 0.3);
+            border-color: white;
+        }
+        
+        .main-content {
+            flex: 1;
+            display: flex;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            gap: 20px;
+        }
+        
+        .chat-container {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            max-height: 500px;
+        }
+        
+        .welcome-message {
+            text-align: center;
+            color: #666;
+            font-size: 16px;
+            line-height: 1.6;
+        }
+        
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .message.user {
+            align-items: flex-end;
+        }
+        
+        .message.assistant {
+            align-items: flex-start;
+        }
+        
+        .message-content {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .message.user .message-content {
+            background: #007bff;
+            color: white;
+        }
+        
+        .message.assistant .message-content {
+            background: #f8f9fa;
+            color: #333;
+            border: 1px solid #e9ecef;
+        }
+        
+        .message-text {
+            flex: 1;
+        }
+        
+        .tts-btn {
+            background: none;
+            border: none;
+            font-size: 16px;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        
+        .tts-btn:hover {
+            background: rgba(0, 0, 0, 0.1);
+        }
+        
+        .message-time {
+            font-size: 12px;
+            color: #999;
+            margin-top: 4px;
+        }
+        
+        .chat-input {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .input-container {
+            display: flex;
+            gap: 10px;
+        }
+        
+        textarea {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            resize: vertical;
+            font-family: inherit;
+            font-size: 14px;
+        }
+        
+        textarea:focus {
+            outline: none;
+            border-color: #007bff;
+        }
+        
+        .send-btn {
+            padding: 12px 24px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        
+        .send-btn:hover:not(:disabled) {
+            background: #0056b3;
+        }
+        
+        .send-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .avatar-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .avatar {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+        }
+        
+        .loading-dots {
+            display: inline-flex;
+            gap: 4px;
+        }
+        
+        .loading-dots span {
+            width: 8px;
+            height: 8px;
+            background: #007bff;
+            border-radius: 50%;
+            animation: loading 1.4s infinite ease-in-out both;
+        }
+        
+        .loading-dots span:nth-child(1) { animation-delay: -0.32s; }
+        .loading-dots span:nth-child(2) { animation-delay: -0.16s; }
+        
+        @keyframes loading {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+        
+        .recording-indicator {
+            text-align: center;
+            color: #dc3545;
+            font-weight: bold;
+            padding: 10px;
+            background: rgba(220, 53, 69, 0.1);
+            border-radius: 8px;
+        }
+        
+        .voice-mode-controls {
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .voice-status {
+            margin-bottom: 20px;
+        }
+        
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+        }
+        
+        .status-indicator.connecting {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .status-indicator.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-indicator.ready {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+        
+        .status-indicator.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+        
+        .voice-connect-btn, .voice-disconnect-btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .voice-connect-btn {
+            background: #28a745;
+            color: white;
+        }
+        
+        .voice-connect-btn:hover:not(:disabled) {
+            background: #218838;
+        }
+        
+        .voice-connect-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .voice-disconnect-btn {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .voice-disconnect-btn:hover {
+            background: #c82333;
+        }
+        
+        .voice-active {
+            background: rgba(40, 167, 69, 0.1);
+            padding: 20px;
+            border-radius: 8px;
+            border: 2px solid #28a745;
+        }
+        
+        .voice-indicator {
+            font-size: 18px;
+            color: #28a745;
+            margin-bottom: 15px;
+        }
+        
+        .voice-hint {
+            color: #666;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        
+        .voice-connecting {
+            text-align: center;
+            padding: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .header-content {
+                flex-direction: column;
+                text-align: center;
+            }
+            
+            .main-content {
+                flex-direction: column;
+            }
+            
+            .avatar-container {
+                order: -1;
+            }
+            
+            .message-content {
+                max-width: 85%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root">
+        <div class="app">
+            <header class="app-header">
+                <div class="header-content">
+                    <div class="symbols">
+                        <img src="https://customer-assets.emergentagent.com/job_belarus-constitution/artifacts/zbmwau2o_1613443720_6-p-fon-dlya-prezentatsii-pro-belarus-10.jpg" alt="Флаг Беларуси" class="flag" />
+                        <img src="https://customer-assets.emergentagent.com/job_belarus-constitution/artifacts/nvezqned_Belarus_gerb_2021.jpg" alt="Герб Беларуси" class="coat-of-arms" />
+                    </div>
+                    <h1 class="title">AI-ассистент по Конституции Республики Беларусь</h1>
+                    <div class="mode-toggle">
+                        <button class="mode-btn active" onclick="setMode(false)">Текст/Голос</button>
+                        <button class="mode-btn" onclick="setMode(true)">Voice Mode</button>
+                    </div>
+                </div>
+            </header>
+
+            <main class="main-content">
+                <div class="chat-container">
+                    <div class="chat-messages" id="messages">
+                        <div class="welcome-message">
+                            <p>Добро пожаловать! Меня зовут <strong>Алеся</strong>, и я помогу вам получить информацию по Конституции Республики Беларусь.</p>
+                            <p>Задайте ваш вопрос текстом или голосом, и я отвечу согласно Конституции РБ редакции 2022 года.</p>
+                        </div>
+                    </div>
+
+                    <div class="chat-input">
+                        <div class="input-container">
+                            <textarea id="messageInput" placeholder="Задайте ваш вопрос по Конституции Республики Беларусь..." rows="2"></textarea>
+                            <div class="input-buttons">
+                                <button class="send-btn" onclick="sendMessage()">Отправить</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="avatar-container">
+                    <img src="https://customer-assets.emergentagent.com/job_belarus-constitution/artifacts/mqexhzvw_d3788255-d883-47b1-837f-751a2e82c62b.png" alt="Ассистент" class="avatar" />
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script>
+        const BACKEND_URL = 'https://your-backend-url.herokuapp.com'; // Замените на ваш URL бэкенда
+        let sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        let voiceMode = false;
+
+        function setMode(isVoiceMode) {
+            voiceMode = isVoiceMode;
+            const buttons = document.querySelectorAll('.mode-btn');
+            buttons.forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Обновить интерфейс в зависимости от режима
+            updateInterface();
+        }
+
+        function updateInterface() {
+            const chatInput = document.querySelector('.chat-input');
+            const voiceControls = document.querySelector('.voice-mode-controls');
+            
+            if (voiceMode) {
+                chatInput.style.display = 'none';
+                if (!voiceControls) {
+                    createVoiceControls();
+                }
+            } else {
+                chatInput.style.display = 'flex';
+                if (voiceControls) {
+                    voiceControls.remove();
+                }
+            }
+        }
+
+        function createVoiceControls() {
+            const chatContainer = document.querySelector('.chat-container');
+            const voiceControls = document.createElement('div');
+            voiceControls.className = 'voice-mode-controls';
+            voiceControls.innerHTML = `
+                <div class="voice-status">
+                    <p>Режим голосового общения в реальном времени</p>
+                    <div class="status-indicator disconnected">
+                        <span class="status-dot"></span>
+                        Статус: Отключен
+                    </div>
+                </div>
+                <button class="voice-connect-btn" onclick="connectVoiceMode()">
+                    Подключиться к голосовому чату
+                </button>
+            `;
+            chatContainer.appendChild(voiceControls);
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            if (!message) return;
+
+            addMessage(message, 'user');
+            input.value = '';
+
+            // Отправить сообщение на бэкенд
+            fetch(`${BACKEND_URL}/api/chat`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    message: message
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                addMessage(data.response, 'assistant');
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                addMessage('Извините, произошла ошибка при отправке сообщения.', 'assistant');
+            });
+        }
+
+        function addMessage(content, role) {
+            const messagesContainer = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+            
+            const now = new Date();
+            const timeString = now.toLocaleTimeString('ru-RU');
+            
+            messageDiv.innerHTML = `
+                <div class="message-content">
+                    <span class="message-text">${content}</span>
+                    ${role === 'assistant' ? '<button class="tts-btn" onclick="playTTS(\'' + content.replace(/'/g, "\\'") + '\')" title="Озвучить ответ">🔊</button>' : ''}
+                </div>
+                <div class="message-time">${timeString}</div>
+            `;
+            
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function playTTS(text) {
+            if ('speechSynthesis' in window) {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = 'ru-RU';
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        function connectVoiceMode() {
+            alert('Voice Mode требует настройки бэкенда. Пожалуйста, используйте текстовый режим.');
+        }
+
+        // Обработка Enter для отправки сообщения
+        document.getElementById('messageInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>

@@ -9,6 +9,8 @@ class RealtimeAudioChat {
     this.peerConnection = null;
     this.dataChannel = null;
     this.audioElement = null;
+    this.sessionToken = null;
+    this.sessionModel = "gpt-4o-realtime-preview-2024-12-17";
     this.onStatusChange = null;
     this.onError = null;
   }
@@ -37,6 +39,9 @@ class RealtimeAudioChat {
       if (!data.client_secret?.value) {
         throw new Error("Failed to get session token");
       }
+      // Save client_secret and model for subsequent negotiation
+      this.sessionToken = data.client_secret.value;
+      this.sessionModel = (data.model) || this.sessionModel;
 
       console.log('Voice Mode session created successfully');
 
@@ -55,7 +60,10 @@ class RealtimeAudioChat {
         method: "POST",
         body: offer.sdp,
         headers: {
-          "Content-Type": "application/sdp"
+          "Content-Type": "application/sdp",
+          // Pass client_secret so backend can negotiate with OpenAI Realtime session
+          "Authorization": `Bearer ${this.sessionToken}`,
+          "X-OpenAI-Model": this.sessionModel
         }
       });
       
