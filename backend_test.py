@@ -341,12 +341,18 @@ class BackendTester:
             # Test basic connectivity
             root_ok = await self.test_root_endpoint()
             if not root_ok:
-                print("❌ Cannot connect to backend, aborting tests")
+                print("❌ Cannot connect to backend API, aborting tests")
                 return self.results
+            
+            self.results['api_connectivity']['passed'] = True
+            self.results['api_connectivity']['details'].append("✅ API endpoint accessible")
             
             # Test Constitution question handling
             await self.test_constitution_question()
             await self.test_non_constitution_question()
+            
+            # Test ObjectId serialization fix (PRIORITY TEST)
+            await self.test_objectid_serialization_fix()
             
             # Test MongoDB storage
             await self.test_chat_history_storage()
