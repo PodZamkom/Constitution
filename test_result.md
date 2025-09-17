@@ -312,7 +312,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Enhanced System Prompt Testing for Алеся"
+    - "Voice Mode Simplified System Prompt Verification"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
