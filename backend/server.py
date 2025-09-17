@@ -120,7 +120,7 @@ async def chat(request: ChatRequest):
                 api_key=api_key,
                 session_id=request.session_id,
                 system_message=SYSTEM_PROMPT
-            ).with_model("openai", "gpt-5")
+            ).with_model("openai", "gpt-4")
             
             user_msg = UserMessage(text=request.message)
             ai_response = await chat.send_message(user_msg)
