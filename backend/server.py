@@ -94,6 +94,10 @@ def prepare_for_mongo(data):
 def parse_from_mongo(item):
     if isinstance(item.get('timestamp'), str):
         item['timestamp'] = datetime.fromisoformat(item['timestamp'])
+    # Handle MongoDB ObjectId
+    if '_id' in item:
+        item['id'] = str(item['_id'])
+        del item['_id']
     return item
 
 # Install emergentintegrations first
