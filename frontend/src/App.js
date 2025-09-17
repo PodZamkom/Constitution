@@ -3,6 +3,150 @@ import './App.css';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
 
+// Voice Mode WebRTC Class
+class RealtimeAudioChat {
+  constructor() {
+    this.peerConnection = null;
+    this.dataChannel = null;
+    this.audioElement = null;
+    this.onStatusChange = null;
+    this.onError = null;
+  }
+
+  async init() {
+    try {
+      console.log('Initializing Voice Mode...');
+      
+      // Get session from backend
+      const tokenResponse = await fetch(`${BACKEND_URL}/api/voice/realtime/session`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+      
+      if (!tokenResponse.ok) {
+        throw new Error(`Session request failed: ${tokenResponse.status}`);
+      }
+      
+      const data = await tokenResponse.json();
+      if (!data.client_secret?.value) {
+        throw new Error("Failed to get session token");
+      }
+
+      // Create and set up WebRTC peer connection
+      this.peerConnection = new RTCPeerConnection();
+      this.setupAudioElement();
+      await this.setupLocalAudio();
+      this.setupDataChannel();
+
+      // Create and send offer
+      const offer = await this.peerConnection.createOffer();
+      await this.peerConnection.setLocalDescription(offer);
+
+      // Send offer to backend and get answer
+      const response = await fetch(`${BACKEND_URL}/api/voice/realtime/negotiate`, {
+        method: "POST",
+        body: offer.sdp,
+        headers: {
+          "Content-Type": "application/sdp"
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Negotiation failed: ${response.status}`);
+      }
+
+      const { sdp: answerSdp } = await response.json();
+      const answer = {
+        type: "answer",
+        sdp: answerSdp
+      };
+
+      await this.peerConnection.setRemoteDescription(answer);
+      console.log("WebRTC connection established");
+      
+      if (this.onStatusChange) {
+        this.onStatusChange('connected');
+      }
+      
+    } catch (error) {
+      console.error("Failed to initialize audio chat:", error);
+      if (this.onError) {
+        this.onError(error.message);
+      }
+      throw error;
+    }
+  }
+
+  setupAudioElement() {
+    if (!this.audioElement) {
+      this.audioElement = document.createElement("audio");
+      this.audioElement.autoplay = true;
+      document.body.appendChild(this.audioElement);
+    }
+
+    this.peerConnection.ontrack = (event) => {
+      this.audioElement.srcObject = event.streams[0];
+    };
+  }
+
+  async setupLocalAudio() {
+    const stream = await navigator.mediaDevices.getUserMedia({ 
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      }
+    });
+    
+    stream.getTracks().forEach(track => {
+      this.peerConnection.addTrack(track, stream);
+    });
+  }
+
+  setupDataChannel() {
+    this.dataChannel = this.peerConnection.createDataChannel("oai-events");
+    this.dataChannel.onmessage = (event) => {
+      console.log("Received event:", event.data);
+      // Handle different event types here
+    };
+    
+    this.dataChannel.onopen = () => {
+      console.log("Data channel opened");
+      if (this.onStatusChange) {
+        this.onStatusChange('ready');
+      }
+    };
+    
+    this.dataChannel.onclose = () => {
+      console.log("Data channel closed");
+      if (this.onStatusChange) {
+        this.onStatusChange('disconnected');
+      }
+    };
+  }
+  
+  disconnect() {
+    if (this.dataChannel) {
+      this.dataChannel.close();
+    }
+    
+    if (this.peerConnection) {
+      this.peerConnection.close();
+    }
+    
+    if (this.audioElement) {
+      document.body.removeChild(this.audioElement);
+      this.audioElement = null;
+    }
+    
+    if (this.onStatusChange) {
+      this.onStatusChange('disconnected');
+    }
+  }
+}
+
 function App() {
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
@@ -13,6 +157,9 @@ function App() {
   const [mediaRecorder, setMediaRecorder] = useState(null);
   const [recordedAudio, setRecordedAudio] = useState(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [voiceModeStatus, setVoiceModeStatus] = useState('disconnected'); // disconnected, connecting, connected, ready
+  const [voiceChat, setVoiceChat] = useState(null);
+  const [capabilities, setCapabilities] = useState({});
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -24,9 +171,23 @@ function App() {
   }, [messages]);
 
   useEffect(() => {
-    // Load chat history
+    // Load chat history and capabilities
     loadChatHistory();
+    loadCapabilities();
   }, []);
+
+  const loadCapabilities = async () => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/capabilities`);
+      if (response.ok) {
+        const data = await response.json();
+        setCapabilities(data);
+        console.log('Backend capabilities:', data);
+      }
+    } catch (error) {
+      console.error('Error loading capabilities:', error);
+    }
+  };
 
   const loadChatHistory = async () => {
     try {
@@ -193,7 +354,49 @@ function App() {
 
   const toggleVoiceMode = () => {
     setVoiceMode(!voiceMode);
-    console.log('Voice mode:', !voiceMode);
+    
+    // Disconnect existing voice chat when switching modes
+    if (voiceChat && voiceModeStatus !== 'disconnected') {
+      disconnectVoiceMode();
+    }
+  };
+
+  const connectVoiceMode = async () => {
+    if (!capabilities.voice_mode_available) {
+      alert('Voice Mode недоступен. Проверьте настройки сервера.');
+      return;
+    }
+    
+    setVoiceModeStatus('connecting');
+    
+    try {
+      const newVoiceChat = new RealtimeAudioChat();
+      
+      newVoiceChat.onStatusChange = (status) => {
+        setVoiceModeStatus(status);
+      };
+      
+      newVoiceChat.onError = (error) => {
+        alert(`Ошибка Voice Mode: ${error}`);
+        setVoiceModeStatus('disconnected');
+      };
+      
+      await newVoiceChat.init();
+      setVoiceChat(newVoiceChat);
+      
+    } catch (error) {
+      console.error('Voice mode connection failed:', error);
+      alert('Не удалось подключиться к Voice Mode. Попробуйте еще раз.');
+      setVoiceModeStatus('disconnected');
+    }
+  };
+
+  const disconnectVoiceMode = () => {
+    if (voiceChat) {
+      voiceChat.disconnect();
+      setVoiceChat(null);
+    }
+    setVoiceModeStatus('disconnected');
   };
 
   const playTTS = async (text) => {
@@ -202,6 +405,16 @@ function App() {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'ru-RU';
       window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  const getVoiceModeStatusText = () => {
+    switch (voiceModeStatus) {
+      case 'connecting': return 'Подключение...';
+      case 'connected': return 'Подключен';
+      case 'ready': return 'Готов к разговору';
+      case 'disconnected': return 'Отключен';
+      default: return 'Неизвестно';
     }
   };
 
@@ -248,6 +461,9 @@ function App() {
               <div className="welcome-message">
                 <p>Добро пожаловать! Я помогу вам получить информацию по Конституции Республики Беларусь.</p>
                 <p>Задайте ваш вопрос текстом или голосом, и я отвечу согласно Конституции РБ редакции 2022 года.</p>
+                {voiceMode && (
+                  <p>🎤 <strong>Voice Mode</strong> - режим голосового общения в реальном времени с возможностью перебивания.</p>
+                )}
               </div>
             )}
             
@@ -306,8 +522,8 @@ function App() {
                     onMouseLeave={stopRecording}
                     onTouchStart={startRecording}
                     onTouchEnd={stopRecording}
-                    disabled={isLoading || isTranscribing}
-                    title="Удерживайте для записи голосового сообщения"
+                    disabled={isLoading || isTranscribing || !capabilities.whisper_available}
+                    title={capabilities.whisper_available ? "Удерживайте для записи голосового сообщения" : "Whisper STT недоступен"}
                   >
                     {isTranscribing ? '⏳' : '🎤'}
                   </button>
@@ -328,10 +544,51 @@ function App() {
             </div>
           ) : (
             <div className="voice-mode-controls">
-              <p>Режим голосового общения в реальном времени</p>
-              <button className="voice-connect-btn">
-                Подключиться к голосовому чату
-              </button>
+              <div className="voice-status">
+                <p>Режим голосового общения в реальном времени</p>
+                <div className={`status-indicator ${voiceModeStatus}`}>
+                  <span className="status-dot"></span>
+                  Статус: {getVoiceModeStatusText()}
+                </div>
+              </div>
+              
+              {voiceModeStatus === 'disconnected' && (
+                <button 
+                  className="voice-connect-btn"
+                  onClick={connectVoiceMode}
+                  disabled={!capabilities.voice_mode_available}
+                >
+                  {capabilities.voice_mode_available ? 'Подключиться к голосовому чату' : 'Voice Mode недоступен'}
+                </button>
+              )}
+              
+              {voiceModeStatus === 'connecting' && (
+                <div className="voice-connecting">
+                  <div className="loading-dots">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                  <p>Подключение к Voice Mode...</p>
+                </div>
+              )}
+              
+              {(voiceModeStatus === 'connected' || voiceModeStatus === 'ready') && (
+                <div className="voice-active">
+                  <div className="voice-indicator">
+                    🎤 <strong>Говорите!</strong> Я слушаю...
+                  </div>
+                  <button 
+                    className="voice-disconnect-btn"
+                    onClick={disconnectVoiceMode}
+                  >
+                    Завершить разговор
+                  </button>
+                  <p className="voice-hint">
+                    💡 Вы можете перебивать меня в любой момент
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>
