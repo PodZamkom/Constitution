@@ -312,7 +312,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Voice Mode with Constitution Instructions"
+    - "Enhanced System Prompt Testing for Алеся"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
