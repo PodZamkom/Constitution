@@ -15,22 +15,14 @@ class RealtimeAudioChat {
 
   async init() {
     try {
-      console.log('Initializing Voice Mode...');
+      console.log('Initializing Voice Mode for Алеся...');
       
-      // Get session from backend with Constitution instructions
-      const sessionData = {
-        instructions: "Ты — Алеся, виртуальный консультант по Конституции Республики Беларусь. Язык ответов: русский. Источник: только Конституция Республики Беларусь, редакция 2022 года. Отвечай строго по фактам, цитируя или кратко пересказывая нормы. Всегда указывай номер статьи, если он известен. Если вопрос выходит за рамки Конституции, отвечай вежливо: 'Меня зовут Алеся, и я могу отвечать только по Конституции Республики Беларусь'. Не додумывай, не придумывай информацию. Формат ответа: краткий основной ответ + 'Справка: Статья NN …'. Представляйся как Алеся в начале разговора.",
-        voice: "nova",  // Female voice
-        language: "ru",
-        model: "gpt-4o-realtime-preview"
-      };
-      
+      // Get session from backend (simplified)
       const tokenResponse = await fetch(`${BACKEND_URL}/api/voice/realtime/session`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
-        },
-        body: JSON.stringify(sessionData)
+        }
       });
       
       if (!tokenResponse.ok) {
@@ -41,6 +33,8 @@ class RealtimeAudioChat {
       if (!data.client_secret?.value) {
         throw new Error("Failed to get session token");
       }
+
+      console.log('Voice Mode session created successfully');
 
       // Create and set up WebRTC peer connection
       this.peerConnection = new RTCPeerConnection();
@@ -72,14 +66,14 @@ class RealtimeAudioChat {
       };
 
       await this.peerConnection.setRemoteDescription(answer);
-      console.log("WebRTC connection established with Constitution instructions");
+      console.log("WebRTC connection established for Алеся Voice Mode");
       
       if (this.onStatusChange) {
         this.onStatusChange('connected');
       }
       
     } catch (error) {
-      console.error("Failed to initialize audio chat:", error);
+      console.error("Failed to initialize Алеся audio chat:", error);
       if (this.onError) {
         this.onError(error.message);
       }
