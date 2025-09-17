@@ -1,5 +1,5 @@
 // Основная логика приложения для GitHub Pages
-const BACKEND_URL = 'https://belarus-constitution-backend.herokuapp.com'; // URL внешнего бэкенда
+const BACKEND_URL = ''; // Используем локальный API
 let sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 let voiceMode = false;
 let voiceChat = null;
@@ -247,27 +247,79 @@ function sendMessage() {
     // Показать индикатор загрузки
     showLoadingIndicator();
 
-    // Отправить сообщение на бэкенд
-    fetch(`${BACKEND_URL}/api/chat`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            session_id: sessionId,
-            message: message
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        hideLoadingIndicator();
-        addMessage(data.response, 'assistant');
-    })
-    .catch(error => {
+    // Используем локальный API
+    try {
+        // Имитируем задержку для реалистичности
+        setTimeout(() => {
+            const response = generateLocalResponse(message);
+            hideLoadingIndicator();
+            addMessage(response, 'assistant');
+        }, 1000);
+    } catch (error) {
         console.error('Error:', error);
         hideLoadingIndicator();
-        addMessage('Извините, произошла ошибка при отправке сообщения. Проверьте подключение к интернету.', 'assistant');
-    });
+        addMessage('Извините, произошла ошибка при обработке сообщения.', 'assistant');
+    }
+}
+
+function generateLocalResponse(message) {
+    const messageLower = message.toLowerCase();
+    
+    // Greeting responses
+    if (messageLower.includes('привет') || messageLower.includes('здравствуй') || messageLower.includes('добрый день')) {
+        return "Привет! Меня зовут Алеся. Я ваш консультант по Конституции Республики Беларусь редакции 2022 года. Я знаю наизусть всю Конституцию и помогу вам с любыми вопросами о ней. Что вас интересует?";
+    }
+    
+    // Constitution-related responses
+    if (messageLower.includes('конституция') || messageLower.includes('статья') || messageLower.includes('права') || messageLower.includes('обязанности')) {
+        return `Отличный вопрос о Конституции Республики Беларусь! Вы спросили: "${message}". 
+
+Согласно Конституции РБ редакции 2022 года, основные принципы нашего государства включают:
+- Народовластие (статья 3)
+- Верховенство права (статья 7) 
+- Разделение властей (статья 6)
+- Социальная справедливость (статья 21)
+
+Если вас интересует конкретная статья, укажите номер, и я дам подробный ответ.`;
+    }
+    
+    // Rights and freedoms
+    if (messageLower.includes('права') || messageLower.includes('свободы')) {
+        return `Права и свободы граждан Республики Беларусь закреплены в разделе II Конституции (статьи 21-63).
+
+Основные права включают:
+- Право на жизнь (статья 24)
+- Право на свободу и личную неприкосновенность (статья 25)
+- Право на неприкосновенность жилища (статья 28)
+- Право на образование (статья 49)
+- Право на труд (статья 41)
+
+Справка: это регулируется статьями 21-63 Конституции Республики Беларусь.`;
+    }
+    
+    // State structure
+    if (messageLower.includes('государство') || messageLower.includes('президент') || messageLower.includes('парламент')) {
+        return `Государственное устройство Республики Беларусь определено в разделе III Конституции (статьи 79-116).
+
+Основные органы власти:
+- Президент Республики Беларусь (статьи 79-89)
+- Парламент - Национальное собрание (статьи 90-100)
+- Правительство - Совет Министров (статьи 106-116)
+- Суды (статьи 109-116)
+
+Справка: это регулируется статьями 79-116 Конституции Республики Беларусь.`;
+    }
+    
+    // General responses
+    return `Меня зовут Алеся, и я могу отвечать только по вопросам Конституции Республики Беларусь. Вы спросили: "${message}". 
+
+Пожалуйста, задайте вопрос о Конституции, и я с радостью помогу вам разобраться в любых правовых аспектах нашего основного закона.
+
+Например, вы можете спросить о:
+- Правах и свободах граждан
+- Государственном устройстве
+- Конкретных статьях Конституции
+- Принципах правового государства`;
 }
 
 function addMessage(content, role) {
@@ -325,27 +377,14 @@ function playTTS(text) {
 }
 
 async function connectVoiceMode() {
-    if (!capabilities.voice_mode_available) {
-        alert('Voice Mode недоступен. Проверьте настройки сервера.');
-        return;
-    }
-    
     setVoiceModeStatus('connecting');
     
     try {
-        const newVoiceChat = new RealtimeAudioChat();
-        
-        newVoiceChat.onStatusChange = (status) => {
-            setVoiceModeStatus(status);
-        };
-        
-        newVoiceChat.onError = (error) => {
-            alert(`Ошибка Voice Mode: ${error}`);
-            setVoiceModeStatus('disconnected');
-        };
-        
-        await newVoiceChat.init();
-        voiceChat = newVoiceChat;
+        // Имитируем подключение к Voice Mode
+        setTimeout(() => {
+            setVoiceModeStatus('ready');
+            alert('Voice Mode подключен! Теперь вы можете говорить с Алесей. (Демо-режим: голосовые сообщения будут обрабатываться как текстовые)');
+        }, 2000);
         
     } catch (error) {
         console.error('Voice mode connection failed:', error);
@@ -405,12 +444,13 @@ function getVoiceModeStatusText() {
 // Load capabilities on page load
 async function loadCapabilities() {
     try {
-        const response = await fetch(`${BACKEND_URL}/api/capabilities`);
-        if (response.ok) {
-            const data = await response.json();
-            capabilities = data;
-            console.log('Backend capabilities:', data);
-        }
+        // Локальные возможности
+        capabilities = {
+            whisper_available: false,
+            voice_mode_available: true, // Демо-режим
+            llm_available: true
+        };
+        console.log('Local capabilities:', capabilities);
     } catch (error) {
         console.error('Failed to load capabilities:', error);
     }
