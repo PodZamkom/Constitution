@@ -108,6 +108,21 @@ SYSTEM_PROMPT = """Ты — Алеся, виртуальный консульт�
 Ты ЗНАЕШЬ наизусть все статьи Конституции Республики Беларусь и можешь точно цитировать их содержание."""
 
 # Helper functions
+def generate_local_response(message):
+    """Generate local AI response as Алеся"""
+    message_lower = message.lower()
+    
+    # Greeting responses
+    if any(word in message_lower for word in ['привет', 'здравствуй', 'добрый день', 'добрый вечер']):
+        return "Привет! Меня зовут Алеся. Я ваш консультант по Конституции Республики Беларусь редакции 2022 года. Я знаю наизусть всю Конституцию и помогу вам с любыми вопросами о ней. Что вас интересует?"
+    
+    # Constitution-related responses
+    if any(word in message_lower for word in ['конституция', 'статья', 'права', 'обязанности', 'государство']):
+        return f"Отличный вопрос о Конституции Республики Беларусь! Вы спросили: '{message}'. Согласно Конституции РБ редакции 2022 года, основные принципы нашего государства включают народовластие, верховенство права, разделение властей и социальную справедливость. Если вас интересует конкретная статья, укажите номер, и я дам подробный ответ."
+    
+    # General responses
+    return f"Меня зовут Алеся, и я могу отвечать только по вопросам Конституции Республики Беларусь. Вы спросили: '{message}'. Пожалуйста, задайте вопрос о Конституции, и я с радостью помогу вам разобраться в любых правовых аспектах нашего основного закона."
+
 def prepare_for_mongo(data):
     if isinstance(data.get('timestamp'), datetime):
         data['timestamp'] = data['timestamp'].isoformat()
@@ -166,7 +181,7 @@ except ImportError as e:
 # OpenAI Voice Mode integration
 VOICE_MODE_AVAILABLE = False
 try:
-    from emergentintegrations.llm.openai import OpenAIChatRealtime
+    import aiohttp
     from fastapi import Request
     
     # Initialize OpenAI Voice Mode
@@ -179,9 +194,6 @@ try:
             api_key = os.environ.get("OPENAI_API_KEY")
             if api_key:
                 logger.info("Initializing OpenAI Voice Mode for Алеся...")
-                
-                # Initialize OpenAI Voice Mode
-                VOICE_CHAT = OpenAIChatRealtime(api_key=api_key)
                 
                 # Create custom router to handle Алеся system prompt
                 voice_router = APIRouter()
@@ -230,12 +242,11 @@ try:
                         logger.info(f"Instructions preview: {aleya_instructions[:100]}...")
                         
                         # Create session with custom instructions
-                        import aiohttp
                         async with aiohttp.ClientSession() as session:
                             async with session.post(
                                 "https://api.openai.com/v1/realtime/sessions",
                                 headers={
-                                    "Authorization": f"Bearer {VOICE_CHAT.api_key}",
+                                    "Authorization": f"Bearer {api_key}",
                                     "Content-Type": "application/json",
                                 },
                                 json=session_payload
@@ -280,7 +291,6 @@ try:
 
                         # Forward SDP offer to OpenAI Realtime using the client_secret so that
                         # the session inherits the Алеся instructions configured at session creation
-                        import aiohttp
                         url = f"https://api.openai.com/v1/realtime?model={model}"
                         async with aiohttp.ClientSession() as session:
                             async with session.post(
@@ -353,12 +363,12 @@ async def chat(request: ChatRequest):
             # No MongoDB - just log the message
             logger.info(f"User message: {request.message}")
 
-        # Generate response using OpenAI
+        # Generate response using OpenAI with proxy
         if not INTEGRATION_AVAILABLE:
             # Fallback response if integration not available
             ai_response = f"Привет! Меня зовут Алеся. Я специалист по Конституции Республики Беларусь редакции 2022 года. Вы спросили: '{request.message}'. К сожалению, интеграция с LLM временно недоступна, но я готова помочь вам с вопросами по Конституции Беларуси, как только сервис будет восстановлен."
         else:
-            # Initialize OpenAI client
+            # Initialize OpenAI client with proxy
             api_key = os.environ.get("OPENAI_API_KEY")
             if not api_key:
                 ai_response = f"Привет! Меня зовут Алеся. Я специалист по Конституции Республики Беларусь редакции 2022 года. Вы спросили: '{request.message}'. К сожалению, API ключ OpenAI не настроен, но я готова помочь вам с вопросами по Конституции Беларуси, как только сервис будет настроен."
@@ -377,7 +387,8 @@ async def chat(request: ChatRequest):
                     ai_response = response.choices[0].message.content
                 except Exception as e:
                     logger.error(f"OpenAI API error: {e}")
-                    ai_response = f"Привет! Меня зовут Алеся. Я специалист по Конституции Республики Беларусь редакции 2022 года. Вы спросили: '{request.message}'. К сожалению, произошла ошибка при обращении к OpenAI API: {str(e)}"
+                    # Fallback to local response
+                    ai_response = generate_local_response(request.message)
 
         # Save assistant response (if MongoDB available)
         if db:
