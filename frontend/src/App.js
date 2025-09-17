@@ -478,7 +478,7 @@ function App() {
             {messages.map((message) => (
               <div key={message.id} className={`message ${message.role}`}>
                 <div className="message-content">
-                  {message.content}
+                  <span className="message-text">{message.content}</span>
                   {message.role === 'assistant' && (
                     <button 
                       className="tts-btn"
