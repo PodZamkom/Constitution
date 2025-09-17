@@ -234,14 +234,15 @@ metadata:
 
 test_plan:
   current_focus:
-    - "OpenAI GPT-5 Text Chat Integration"
     - "MongoDB Chat History Storage"
     - "Text Chat Interface"
-    - "Constitution System Prompt"
-  stuck_tasks: []
+  stuck_tasks:
+    - "MongoDB Chat History Storage"
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
   - agent: "main"
     message: "Phase 1 implementation complete: Basic UI with Belarus symbols loading successfully. Core backend endpoints implemented with OpenAI GPT-5 integration and MongoDB storage. Ready for backend testing - focus on text chat functionality with Constitution prompting."
+  - agent: "testing"
+    message: "Backend testing completed. CRITICAL ISSUE: MongoDB history endpoint has ObjectId serialization errors causing 500 errors. Chat functionality works well with GPT-4 (switched from GPT-5 due to API stability). Constitution prompting working correctly. SSE streaming functional. Need to fix MongoDB ObjectId serialization in history retrieval."
