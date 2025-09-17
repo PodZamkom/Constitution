@@ -47,11 +47,16 @@ class PyObjectId(ObjectId):
 
 # Pydantic models
 class ChatMessage(BaseModel):
-    id: str = ""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
     session_id: str
     content: str
     role: str  # user or assistant
-    timestamp: datetime = None
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    class Config:
+        allow_population_by_field_name = True
+        arbitrary_types_allowed = True
+        json_encoders = {ObjectId: str}
 
 class ChatRequest(BaseModel):
     session_id: str
