@@ -146,7 +146,77 @@ class BackendTester:
             print(f"❌ Non-Constitution question test error: {str(e)}")
             return False
 
-    async def test_chat_history_storage(self):
+    async def test_objectid_serialization_fix(self):
+        """Test that ObjectId serialization issue is fixed"""
+        print("\n🧪 Testing ObjectId serialization fix...")
+        
+        # Create a unique session for this test
+        objectid_test_session = f"objectid_test_{int(time.time())}"
+        
+        try:
+            # Send multiple messages to create history
+            messages_to_send = [
+                "Какие права граждан гарантирует Конституция Беларуси?",
+                "Что говорит Конституция о правах человека?",
+                "Расскажи о структуре Конституции"
+            ]
+            
+            for i, message in enumerate(messages_to_send):
+                payload = {
+                    "session_id": objectid_test_session,
+                    "message": message
+                }
+                
+                async with self.session.post(f"{BASE_API_URL}/chat", json=payload) as response:
+                    if response.status != 200:
+                        self.results['objectid_serialization']['details'].append(f"Failed to send message {i+1}")
+                        return False
+                
+                # Small delay between messages
+                await asyncio.sleep(0.5)
+            
+            # Now test history retrieval multiple times to ensure consistency
+            for attempt in range(3):
+                async with self.session.get(f"{BASE_API_URL}/history/{objectid_test_session}") as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        messages = data.get('messages', [])
+                        
+                        # Check that we have the expected number of messages (user + assistant for each)
+                        expected_count = len(messages_to_send) * 2
+                        if len(messages) == expected_count:
+                            # Check that all messages have proper string IDs (not ObjectId)
+                            all_have_string_ids = True
+                            for msg in messages:
+                                msg_id = msg.get('id', '')
+                                if not isinstance(msg_id, str) or len(msg_id) < 10:
+                                    all_have_string_ids = False
+                                    self.results['objectid_serialization']['details'].append(f"Invalid ID format: {msg_id}")
+                                    break
+                            
+                            if all_have_string_ids:
+                                self.results['objectid_serialization']['passed'] = True
+                                self.results['objectid_serialization']['details'].append(f"✅ All {len(messages)} messages have proper string IDs")
+                                self.results['objectid_serialization']['details'].append(f"✅ History retrieval consistent across {attempt+1} attempts")
+                                print(f"✅ ObjectId serialization fix working: {len(messages)} messages with string IDs")
+                                return True
+                        else:
+                            self.results['objectid_serialization']['details'].append(f"Expected {expected_count} messages, got {len(messages)}")
+                    else:
+                        self.results['objectid_serialization']['details'].append(f"History retrieval failed on attempt {attempt+1}: HTTP {response.status}")
+                        if response.status == 500:
+                            error_text = await response.text()
+                            self.results['objectid_serialization']['details'].append(f"500 Error details: {error_text}")
+                            print(f"❌ 500 Internal Server Error on attempt {attempt+1} - ObjectId issue still present")
+                            return False
+            
+            print(f"❌ ObjectId serialization test failed")
+            return False
+                    
+        except Exception as e:
+            self.results['objectid_serialization']['details'].append(f"Exception: {str(e)}")
+            print(f"❌ ObjectId serialization test error: {str(e)}")
+            return False
         """Test MongoDB chat history storage and retrieval"""
         print("\n🧪 Testing MongoDB chat history storage...")
         
