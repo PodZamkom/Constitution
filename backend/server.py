@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import motor.motor_asyncio
