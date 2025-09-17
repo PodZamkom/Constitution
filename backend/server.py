@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -10,8 +10,14 @@ import uuid
 from datetime import datetime, timezone
 import json
 from bson import ObjectId
+import tempfile
+import logging
 
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -67,6 +73,11 @@ class ChatResponse(BaseModel):
     session_id: str
     message_id: str
 
+class TranscriptionResponse(BaseModel):
+    transcription: str
+    language: str
+    confidence: Optional[float] = None
+
 # Constitution assistant system prompt
 SYSTEM_PROMPT = """Ты — виртуальный консультант по Конституции Республики Беларусь.
 
@@ -107,6 +118,39 @@ try:
 except ImportError:
     INTEGRATION_AVAILABLE = False
     print("Warning: emergentintegrations not installed")
+
+# Whisper integration
+WHISPER_AVAILABLE = False
+try:
+    import whisper
+    import torch
+    import numpy as np
+    
+    # Initialize Whisper model
+    WHISPER_MODEL = None
+    
+    @app.on_event("startup")
+    async def load_whisper_model():
+        global WHISPER_MODEL, WHISPER_AVAILABLE
+        try:
+            logger.info("Loading Whisper model for Russian STT...")
+            # Use 'base' model for good balance of speed and accuracy for Russian
+            WHISPER_MODEL = whisper.load_model("base")
+            WHISPER_AVAILABLE = True
+            logger.info("Whisper model loaded successfully")
+            
+            # Test model with dummy audio
+            dummy_audio = np.zeros(16000, dtype=np.float32)  # 1 second of silence
+            result = WHISPER_MODEL.transcribe(dummy_audio, language="ru")
+            logger.info("Whisper model warmup completed")
+            
+        except Exception as e:
+            logger.error(f"Failed to load Whisper model: {e}")
+            WHISPER_AVAILABLE = False
+
+except ImportError as e:
+    logger.warning(f"Whisper not available: {e}")
+    WHISPER_AVAILABLE = False
 
 @app.get("/")
 async def root():
@@ -171,6 +215,73 @@ async def chat(request: ChatRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing chat: {str(e)}")
+
+@app.post("/api/transcribe", response_model=TranscriptionResponse)
+async def transcribe_audio(file: UploadFile = File(...)):
+    """Transcribe uploaded audio file to Russian text using Whisper"""
+    
+    if not WHISPER_AVAILABLE or WHISPER_MODEL is None:
+        raise HTTPException(
+            status_code=503, 
+            detail="Whisper STT service unavailable"
+        )
+    
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith('audio/'):
+        raise HTTPException(
+            status_code=400,
+            detail="File must be an audio file"
+        )
+    
+    # Check file size (25MB limit)
+    MAX_FILE_SIZE = 25 * 1024 * 1024
+    
+    try:
+        # Read file content
+        file_content = await file.read()
+        
+        if len(file_content) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail="File too large. Maximum size is 25MB"
+            )
+        
+        # Create temporary file for Whisper processing
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
+            temp_file.write(file_content)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Transcribe using Whisper
+            logger.info(f"Transcribing audio file: {file.filename}")
+            result = WHISPER_MODEL.transcribe(
+                temp_file_path,
+                language="ru",  # Russian language
+                verbose=False
+            )
+            
+            transcription = result["text"].strip()
+            detected_language = result.get("language", "ru")
+            
+            logger.info(f"Transcription completed: {transcription[:100]}...")
+            
+            return TranscriptionResponse(
+                transcription=transcription,
+                language=detected_language
+            )
+            
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(temp_file_path)
+            except OSError:
+                logger.warning(f"Could not delete temporary file: {temp_file_path}")
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Transcription error: {e}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 @app.get("/api/history/{session_id}")
 async def get_chat_history(session_id: str):
