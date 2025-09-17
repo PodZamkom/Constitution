@@ -122,7 +122,7 @@ backend:
 
   - task: "MongoDB Chat History Storage"
     implemented: true
-    working: false
+    working: true
     file: "/app/backend/server.py"
     stuck_count: 1
     priority: "high"
@@ -134,6 +134,9 @@ backend:
       - working: false
         agent: "testing"
         comment: "❌ CRITICAL: History endpoint (/api/history/{session_id}) returns 500 Internal Server Error for some session IDs. MongoDB ObjectId serialization issues detected in logs. Messages are being saved (chat endpoint works) but retrieval fails intermittently."
+      - working: true
+        agent: "testing"
+        comment: "✅ FIXED: ObjectId serialization issue resolved. History endpoint now consistently returns 200 OK with proper JSON responses. All message IDs are properly converted to strings. Tested with multiple sessions - no more 500 Internal Server Errors. MongoDB storage and retrieval working perfectly."
 
   - task: "SSE Streaming Responses"
     implemented: true
