@@ -198,7 +198,7 @@ frontend:
 
   - task: "Voice Mode Toggle"
     implemented: true
-    working: false
+    working: true
     file: "/app/frontend/src/App.js"
     stuck_count: 0
     priority: "medium"
@@ -207,6 +207,9 @@ frontend:
       - working: false
         agent: "main"
         comment: "Voice mode toggle UI implemented but functionality is placeholder. Shows different controls when toggled."
+      - working: true
+        agent: "testing"
+        comment: "✅ TESTED: Voice mode toggle working correctly. Text/Voice mode active by default. Switching to Voice Mode hides text input and shows voice controls with 'Подключиться к голосовому чату' button. Toggle states and UI transitions work properly on all screen sizes. Voice functionality is placeholder as expected."
 
   - task: "TTS Playback Buttons"
     implemented: true
