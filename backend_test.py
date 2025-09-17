@@ -27,9 +27,11 @@ class BackendTester:
         self.session = None
         self.test_session_id = str(uuid.uuid4())
         self.results = {
+            'api_connectivity': {'passed': False, 'details': []},
             'chat_endpoint': {'passed': False, 'details': []},
             'constitution_prompt': {'passed': False, 'details': []},
             'mongodb_storage': {'passed': False, 'details': []},
+            'objectid_serialization': {'passed': False, 'details': []},
             'sse_streaming': {'passed': False, 'details': []},
             'history_retrieval': {'passed': False, 'details': []}
         }
