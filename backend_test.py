@@ -217,7 +217,8 @@ class BackendTester:
             self.results['objectid_serialization']['details'].append(f"Exception: {str(e)}")
             print(f"❌ ObjectId serialization test error: {str(e)}")
             return False
-        """Test MongoDB chat history storage and retrieval"""
+
+    async def test_chat_history_storage(self):
         print("\n🧪 Testing MongoDB chat history storage...")
         
         try:
