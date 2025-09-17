@@ -1,5 +1,5 @@
 // Основная логика приложения для GitHub Pages
-const BACKEND_URL = 'http://localhost:8001'; // Local backend API for testing
+const BACKEND_URL = 'https://belarus-constitution-backend.herokuapp.com'; // Production backend API
 let sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 let voiceMode = false;
 let voiceChat = null;
