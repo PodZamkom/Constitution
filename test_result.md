@@ -248,8 +248,7 @@ metadata:
   run_ui: true
 
 test_plan:
-  current_focus:
-    - "Text Chat Interface"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
