@@ -269,12 +269,12 @@ body {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 1.2rem;
+  font-size: 1.1rem;
   padding: 0.2rem;
-  margin-left: 0.5rem;
   border-radius: 4px;
   transition: background 0.3s ease;
   flex-shrink: 0;
+  margin-left: 0.3rem;
 }
 
 .tts-btn:hover {
