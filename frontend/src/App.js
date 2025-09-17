@@ -524,18 +524,6 @@ function App() {
                 />
                 <div className="input-buttons">
                   <button
-                    className={`record-btn ${isRecording ? 'recording' : ''} ${isTranscribing ? 'transcribing' : ''}`}
-                    onMouseDown={startRecording}
-                    onMouseUp={stopRecording}
-                    onMouseLeave={stopRecording}
-                    onTouchStart={startRecording}
-                    onTouchEnd={stopRecording}
-                    disabled={isLoading || isTranscribing || !capabilities.whisper_available}
-                    title={capabilities.whisper_available ? "Удерживайте для записи голосового сообщения" : "Whisper STT недоступен"}
-                  >
-                    {isTranscribing ? '⏳' : '🎤'}
-                  </button>
-                  <button
                     className="send-btn"
                     onClick={() => sendMessage()}
                     disabled={isLoading || !inputMessage.trim() || isTranscribing}
