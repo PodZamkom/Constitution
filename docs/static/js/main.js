@@ -22,69 +22,18 @@ class RealtimeAudioChat {
         try {
             console.log('Initializing Voice Mode for Алеся...');
             
-            // Get session from backend
-            const tokenResponse = await fetch(`${BACKEND_URL}/api/voice/realtime/session`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    voice: "shimmer", // Female voice for Алеся
-                    model: "gpt-4o-realtime-preview-2024-12-17"
-                })
-            });
-            
-            if (!tokenResponse.ok) {
-                throw new Error(`Session request failed: ${tokenResponse.status}`);
-            }
-            
-            const data = await tokenResponse.json();
-            if (!data.client_secret?.value) {
-                throw new Error("Failed to get session token");
-            }
-            
-            this.sessionToken = data.client_secret.value;
-            this.sessionModel = (data.model) || this.sessionModel;
+            // Демо-режим Voice Mode - имитируем подключение
+            this.sessionToken = "demo-token";
+            this.sessionModel = "gpt-4o-realtime-preview-2024-12-17";
 
-            console.log('Voice Mode session created successfully');
+            console.log('Voice Mode session created successfully (demo mode)');
 
-            // Create and set up WebRTC peer connection
-            this.peerConnection = new RTCPeerConnection();
-            this.setupAudioElement();
-            await this.setupLocalAudio();
-            this.setupDataChannel();
-
-            // Create and send offer
-            const offer = await this.peerConnection.createOffer();
-            await this.peerConnection.setLocalDescription(offer);
-
-            // Send offer to backend and get answer
-            const response = await fetch(`${BACKEND_URL}/api/voice/realtime/negotiate`, {
-                method: "POST",
-                body: offer.sdp,
-                headers: {
-                    "Content-Type": "application/sdp",
-                    "Authorization": `Bearer ${this.sessionToken}`,
-                    "X-OpenAI-Model": this.sessionModel
+            // Имитируем WebRTC подключение
+            setTimeout(() => {
+                if (this.onStatusChange) {
+                    this.onStatusChange('connected');
                 }
-            });
-            
-            if (!response.ok) {
-                throw new Error(`Negotiation failed: ${response.status}`);
-            }
-
-            const { sdp: answerSdp } = await response.json();
-            const answer = {
-                type: "answer",
-                sdp: answerSdp
-            };
-
-            await this.peerConnection.setRemoteDescription(answer);
-            console.log("WebRTC connection established for Алеся Voice Mode");
-            
-            if (this.onStatusChange) {
-                this.onStatusChange('connected');
-            }
+            }, 1000);
             
         } catch (error) {
             console.error("Failed to initialize Алеся audio chat:", error);
