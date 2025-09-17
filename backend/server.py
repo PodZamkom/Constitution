@@ -206,8 +206,8 @@ try:
 
 Формат ответа: краткий основной ответ + "Справка: Статья NN …"."""
                         
-                        # Use nova voice (female) and add instructions
-                        voice = body.get('voice', 'nova')
+                        # Use shimmer voice (female) and add instructions
+                        voice = body.get('voice', 'shimmer')
                         model = body.get('model', 'gpt-4o-realtime-preview-2024-12-17')
                         
                         logger.info(f"Creating Алеся session with voice: {voice}")
