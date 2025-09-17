@@ -312,7 +312,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Critical Bug Fixes and Interface Updates"
+    - "Voice Mode with Constitution Instructions"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
