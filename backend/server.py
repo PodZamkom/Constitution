@@ -156,6 +156,7 @@ except ImportError as e:
 VOICE_MODE_AVAILABLE = False
 try:
     from emergentintegrations.llm.openai import OpenAIChatRealtime
+    from fastapi import Request
     
     # Initialize OpenAI Voice Mode
     VOICE_CHAT = None
@@ -168,25 +169,55 @@ try:
             if api_key:
                 logger.info("Initializing OpenAI Voice Mode...")
                 
-                # Initialize OpenAI Voice Mode with Russian language settings
+                # Initialize OpenAI Voice Mode
                 VOICE_CHAT = OpenAIChatRealtime(api_key=api_key)
                 
-                # Configure Voice Mode for Russian language and Constitution context
-                if hasattr(VOICE_CHAT, 'configure'):
-                    VOICE_CHAT.configure(
-                        language="ru",
-                        voice="alloy",
-                        instructions=SYSTEM_PROMPT
-                    )
-                    logger.info("Voice Mode configured with Russian language and Constitution instructions")
-                
-                # Register voice mode router
+                # Register voice mode router with custom session handler
                 voice_router = APIRouter()
-                OpenAIChatRealtime.register_openai_realtime_router(voice_router, VOICE_CHAT)
+                
+                # Custom session endpoint to handle instructions
+                @voice_router.post("/realtime/session")
+                async def custom_realtime_session(request: Request):
+                    try:
+                        body = await request.json() if hasattr(request, 'json') else {}
+                        
+                        # Extract voice and model preferences
+                        voice = body.get('voice', 'nova')  # Default to nova (female voice)
+                        model = body.get('model', 'gpt-4o-realtime-preview')
+                        instructions = body.get('instructions', SYSTEM_PROMPT)
+                        
+                        logger.info(f"Creating session with voice: {voice}, instructions: {instructions[:50]}...")
+                        
+                        # Create session with custom parameters
+                        session_data = VOICE_CHAT.create_ephemeral_session_for_audio_chat(
+                            voice=voice,
+                            model=model
+                        )
+                        
+                        # Add instructions to session data if possible
+                        if 'session_config' not in session_data:
+                            session_data['session_config'] = {}
+                        
+                        session_data['session_config']['instructions'] = instructions
+                        session_data['session_config']['voice'] = voice
+                        session_data['session_config']['language'] = body.get('language', 'ru')
+                        
+                        logger.info("Voice Mode session created with Алеся instructions")
+                        return session_data
+                        
+                    except Exception as e:
+                        logger.error(f"Error creating voice session: {e}")
+                        raise HTTPException(status_code=500, detail=str(e))
+                
+                # Use default negotiate endpoint
+                @voice_router.post("/realtime/negotiate")
+                async def realtime_negotiate(request: Request):
+                    return await VOICE_CHAT.negotiate_connection(request)
+                
                 app.include_router(voice_router, prefix="/api/voice")
                 
                 VOICE_MODE_AVAILABLE = True
-                logger.info("OpenAI Voice Mode initialized successfully")
+                logger.info("OpenAI Voice Mode initialized successfully with Алеся configuration")
             else:
                 logger.warning("OpenAI API key not found, Voice Mode unavailable")
         except Exception as e:
