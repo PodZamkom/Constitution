@@ -156,6 +156,7 @@ except ImportError as e:
 VOICE_MODE_AVAILABLE = False
 try:
     from emergentintegrations.llm.openai import OpenAIChatRealtime
+    from fastapi import Request
     
     # Initialize OpenAI Voice Mode
     VOICE_CHAT = None
@@ -166,18 +167,96 @@ try:
         try:
             api_key = os.environ.get("OPENAI_API_KEY")
             if api_key:
-                logger.info("Initializing OpenAI Voice Mode...")
+                logger.info("Initializing OpenAI Voice Mode for Алеся...")
                 
-                # Initialize OpenAI Voice Mode (simple initialization)
+                # Initialize OpenAI Voice Mode
                 VOICE_CHAT = OpenAIChatRealtime(api_key=api_key)
                 
-                # Use standard router registration
+                # Create custom router to handle Алеся system prompt
                 voice_router = APIRouter()
-                OpenAIChatRealtime.register_openai_realtime_router(voice_router, VOICE_CHAT)
+                
+                @voice_router.post("/realtime/session")
+                async def create_aleya_session(request: Request):
+                    """Create session with Алеся system prompt"""
+                    try:
+                        # Get request body if any
+                        body = {}
+                        try:
+                            body = await request.json()
+                        except:
+                            pass
+                        
+                        # Алеся system prompt for Voice Mode
+                        aleya_instructions = """Ты — Алеся, виртуальный консультант по Конституции Республики Беларусь. 
+
+Язык ответов: русский.
+
+Источник: только Конституция Республики Беларусь, редакция 2022 года.
+
+Представляйся: "Привет! Меня зовут Алеся, я ваш консультант по Конституции Республики Беларусь."
+
+Отвечай строго по фактам, цитируя или кратко пересказывая нормы Конституции.
+
+Всегда указывай номер статьи, если он известен.
+
+Если вопрос выходит за рамки Конституции, отвечай вежливо:
+"Меня зовут Алеся, и я могу отвечать только по Конституции Республики Беларусь."
+
+Не додумывай, не придумывай информацию.
+
+Формат ответа: краткий основной ответ + "Справка: Статья NN …"."""
+                        
+                        # Use nova voice (female) and add instructions
+                        voice = body.get('voice', 'nova')
+                        model = body.get('model', 'gpt-4o-realtime-preview-2024-12-17')
+                        
+                        logger.info(f"Creating Алеся session with voice: {voice}")
+                        
+                        # Create session with custom instructions
+                        import aiohttp
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(
+                                "https://api.openai.com/v1/realtime/sessions",
+                                headers={
+                                    "Authorization": f"Bearer {VOICE_CHAT.api_key}",
+                                    "Content-Type": "application/json",
+                                },
+                                json={
+                                    "model": model,
+                                    "voice": voice,
+                                    "instructions": aleya_instructions
+                                }
+                            ) as response:
+                                if response.status == 200:
+                                    session_data = await response.json()
+                                    logger.info("Алеся Voice Mode session created with Constitution instructions")
+                                    return session_data
+                                else:
+                                    error_text = await response.text()
+                                    logger.error(f"Session creation failed: {response.status} - {error_text}")
+                                    raise HTTPException(status_code=response.status, detail=error_text)
+                        
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        logger.error(f"Error creating Алеся session: {e}")
+                        raise HTTPException(status_code=500, detail=str(e))
+                
+                @voice_router.post("/realtime/negotiate")
+                async def negotiate_aleya_connection(request: Request):
+                    """Handle WebRTC negotiation for Алеся"""
+                    try:
+                        sdp_offer = await request.body()
+                        sdp_answer = await VOICE_CHAT.negotiate_connection(sdp_offer.decode())
+                        return JSONResponse(content={"sdp": sdp_answer})
+                    except Exception as e:
+                        logger.error(f"Negotiation error: {e}")
+                        raise HTTPException(status_code=500, detail=str(e))
+                
                 app.include_router(voice_router, prefix="/api/voice")
                 
                 VOICE_MODE_AVAILABLE = True
-                logger.info("OpenAI Voice Mode initialized successfully")
+                logger.info("OpenAI Voice Mode for Алеся initialized successfully")
             else:
                 logger.warning("OpenAI API key not found, Voice Mode unavailable")
         except Exception as e:
