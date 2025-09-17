@@ -1,5 +1,5 @@
 // Основная логика приложения для GitHub Pages
-const BACKEND_URL = ''; // Используем локальный API
+const BACKEND_URL = 'http://localhost:8001'; // Local backend API for testing
 let sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 let voiceMode = false;
 let voiceChat = null;
@@ -22,18 +22,69 @@ class RealtimeAudioChat {
         try {
             console.log('Initializing Voice Mode for Алеся...');
             
-            // Демо-режим Voice Mode - имитируем подключение
-            this.sessionToken = "demo-token";
-            this.sessionModel = "gpt-4o-realtime-preview-2024-12-17";
+            // РЕАЛЬНЫЙ API вызов для создания сессии
+            const tokenResponse = await fetch(`${BACKEND_URL}/api/voice/realtime/session`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    voice: "shimmer", // Female voice for Алеся
+                    model: "gpt-4o-realtime-preview-2024-12-17"
+                })
+            });
+            
+            if (!tokenResponse.ok) {
+                throw new Error(`Session request failed: ${tokenResponse.status}`);
+            }
+            
+            const data = await tokenResponse.json();
+            if (!data.client_secret?.value) {
+                throw new Error("Failed to get session token");
+            }
+            
+            this.sessionToken = data.client_secret.value;
+            this.sessionModel = (data.model) || this.sessionModel;
 
-            console.log('Voice Mode session created successfully (demo mode)');
+            console.log('Voice Mode session created successfully');
 
-            // Имитируем WebRTC подключение
-            setTimeout(() => {
-                if (this.onStatusChange) {
-                    this.onStatusChange('connected');
+            // Create and set up WebRTC peer connection
+            this.peerConnection = new RTCPeerConnection();
+            this.setupAudioElement();
+            await this.setupLocalAudio();
+            this.setupDataChannel();
+
+            // Create and send offer
+            const offer = await this.peerConnection.createOffer();
+            await this.peerConnection.setLocalDescription(offer);
+
+            // Send offer to backend and get answer
+            const response = await fetch(`${BACKEND_URL}/api/voice/realtime/negotiate`, {
+                method: "POST",
+                body: offer.sdp,
+                headers: {
+                    "Content-Type": "application/sdp",
+                    "Authorization": `Bearer ${this.sessionToken}`,
+                    "X-OpenAI-Model": this.sessionModel
                 }
-            }, 1000);
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Negotiation failed: ${response.status}`);
+            }
+
+            const { sdp: answerSdp } = await response.json();
+            const answer = {
+                type: "answer",
+                sdp: answerSdp
+            };
+
+            await this.peerConnection.setRemoteDescription(answer);
+            console.log("WebRTC connection established for Алеся Voice Mode");
+            
+            if (this.onStatusChange) {
+                this.onStatusChange('connected');
+            }
             
         } catch (error) {
             console.error("Failed to initialize Алеся audio chat:", error);
@@ -185,7 +236,7 @@ function createVoiceActiveControls() {
     chatContainer.appendChild(voiceControls);
 }
 
-function sendMessage() {
+async function sendMessage() {
     const input = document.getElementById('messageInput');
     const message = input.value.trim();
     if (!message) return;
@@ -196,18 +247,30 @@ function sendMessage() {
     // Показать индикатор загрузки
     showLoadingIndicator();
 
-    // Используем локальный API
     try {
-        // Имитируем задержку для реалистичности
-        setTimeout(() => {
-            const response = generateLocalResponse(message);
-            hideLoadingIndicator();
-            addMessage(response, 'assistant');
-        }, 1000);
+        // РЕАЛЬНЫЙ API вызов к ChatGPT
+        const response = await fetch(`${BACKEND_URL}/api/chat`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                message: message,
+                session_id: sessionId
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        hideLoadingIndicator();
+        addMessage(data.response, 'assistant');
     } catch (error) {
         console.error('Error:', error);
         hideLoadingIndicator();
-        addMessage('Извините, произошла ошибка при обработке сообщения.', 'assistant');
+        addMessage('Извините, произошла ошибка при отправке сообщения. Проверьте подключение к интернету.', 'assistant');
     }
 }
 
@@ -393,15 +456,28 @@ function getVoiceModeStatusText() {
 // Load capabilities on page load
 async function loadCapabilities() {
     try {
-        // Локальные возможности
-        capabilities = {
-            whisper_available: false,
-            voice_mode_available: true, // Демо-режим
-            llm_available: true
-        };
-        console.log('Local capabilities:', capabilities);
+        // РЕАЛЬНАЯ проверка API
+        const response = await fetch(`${BACKEND_URL}/api/capabilities`);
+        if (response.ok) {
+            capabilities = await response.json();
+            console.log('API capabilities:', capabilities);
+        } else {
+            // Fallback если API недоступен
+            capabilities = {
+                whisper_available: false,
+                voice_mode_available: true,
+                llm_available: true
+            };
+            console.log('Using fallback capabilities:', capabilities);
+        }
     } catch (error) {
         console.error('Failed to load capabilities:', error);
+        // Fallback при ошибке
+        capabilities = {
+            whisper_available: false,
+            voice_mode_available: true,
+            llm_available: true
+        };
     }
 }
 
