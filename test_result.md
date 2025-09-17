@@ -210,6 +210,9 @@ frontend:
       - working: true
         agent: "testing"
         comment: "✅ TESTED: Voice mode toggle working correctly. Text/Voice mode active by default. Switching to Voice Mode hides text input and shows voice controls with 'Подключиться к голосовому чату' button. Toggle states and UI transitions work properly on all screen sizes. Voice functionality is placeholder as expected."
+      - working: true
+        agent: "testing"
+        comment: "✅ COMPREHENSIVE VOICE MODE TESTING: Both voice modes tested extensively. Voice Mode 1 (Text/Voice with hold-to-record) - microphone button interactions working perfectly with visual feedback and recording states. Voice Mode 2 (OpenAI Voice Mode) - toggle functionality working, connection UI and status indicators functional, proper error handling for microphone access. Mode switching seamless across all screen sizes. Backend capabilities detection working correctly (whisper_available: true, voice_mode_available: true). All voice UI components production-ready."
 
   - task: "TTS Playback Buttons"
     implemented: true
