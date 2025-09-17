@@ -10,6 +10,9 @@ function App() {
   const [sessionId] = useState(() => `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`);
   const [isRecording, setIsRecording] = useState(false);
   const [voiceMode, setVoiceMode] = useState(false); // false = text/voice, true = realtime voice
+  const [mediaRecorder, setMediaRecorder] = useState(null);
+  const [recordedAudio, setRecordedAudio] = useState(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -96,21 +99,100 @@ function App() {
     }
   };
 
-  const startRecording = () => {
-    setIsRecording(true);
-    // TODO: Implement voice recording
-    console.log('Starting voice recording...');
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true
+        }
+      });
+      
+      const recorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      });
+      
+      const audioChunks = [];
+      
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunks.push(event.data);
+        }
+      };
+      
+      recorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        setRecordedAudio(audioBlob);
+        
+        // Stop all audio tracks
+        stream.getTracks().forEach(track => track.stop());
+        
+        // Transcribe audio
+        await transcribeAudio(audioBlob);
+      };
+      
+      recorder.start();
+      setMediaRecorder(recorder);
+      setIsRecording(true);
+      console.log('Starting voice recording...');
+      
+    } catch (error) {
+      console.error('Error accessing microphone:', error);
+      alert('Ошибка доступа к микрофону. Пожалуйста, разрешите доступ к микрофону.');
+    }
   };
 
   const stopRecording = () => {
-    setIsRecording(false);
-    // TODO: Implement voice recording stop and transcription
-    console.log('Stopping voice recording...');
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      mediaRecorder.stop();
+      setIsRecording(false);
+      console.log('Stopping voice recording...');
+    }
+  };
+
+  const transcribeAudio = async (audioBlob) => {
+    setIsTranscribing(true);
+    
+    try {
+      const formData = new FormData();
+      formData.append('file', audioBlob, 'recording.webm');
+      
+      const response = await fetch(`${BACKEND_URL}/api/transcribe`, {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        const transcription = data.transcription;
+        
+        if (transcription && transcription.trim()) {
+          // Set the transcribed text as input and send it
+          setInputMessage(transcription);
+          setTimeout(() => {
+            sendMessage(transcription);
+          }, 100);
+        } else {
+          console.warn('Empty transcription received');
+          alert('Не удалось распознать речь. Попробуйте еще раз.');
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Transcription failed:', errorData);
+        alert('Ошибка при распознавании речи. Попробуйте еще раз.');
+      }
+    } catch (error) {
+      console.error('Error transcribing audio:', error);
+      alert('Ошибка при отправке аудио. Проверьте соединение с интернетом.');
+    } finally {
+      setIsTranscribing(false);
+    }
   };
 
   const toggleVoiceMode = () => {
     setVoiceMode(!voiceMode);
-    // TODO: Implement voice mode toggle
     console.log('Voice mode:', !voiceMode);
   };
 
@@ -165,7 +247,7 @@ function App() {
             {messages.length === 0 && (
               <div className="welcome-message">
                 <p>Добро пожаловать! Я помогу вам получить информацию по Конституции Республики Беларусь.</p>
-                <p>Задайте ваш вопрос, и я отвечу согласно Конституции РБ редакции 2022 года.</p>
+                <p>Задайте ваш вопрос текстом или голосом, и я отвечу согласно Конституции РБ редакции 2022 года.</p>
               </div>
             )}
             
@@ -189,10 +271,10 @@ function App() {
               </div>
             ))}
             
-            {isLoading && (
+            {(isLoading || isTranscribing) && (
               <div className="message assistant">
                 <div className="message-content loading">
-                  <span>Ассистент думает...</span>
+                  <span>{isTranscribing ? 'Распознавание речи...' : 'Ассистент думает...'}</span>
                   <div className="loading-dots">
                     <span></span>
                     <span></span>
@@ -213,29 +295,36 @@ function App() {
                   onChange={(e) => setInputMessage(e.target.value)}
                   onKeyPress={handleKeyPress}
                   placeholder="Задайте ваш вопрос по Конституции Республики Беларусь..."
-                  disabled={isLoading}
+                  disabled={isLoading || isTranscribing}
                   rows="2"
                 />
                 <div className="input-buttons">
                   <button
-                    className={`record-btn ${isRecording ? 'recording' : ''}`}
+                    className={`record-btn ${isRecording ? 'recording' : ''} ${isTranscribing ? 'transcribing' : ''}`}
                     onMouseDown={startRecording}
                     onMouseUp={stopRecording}
                     onMouseLeave={stopRecording}
-                    disabled={isLoading}
+                    onTouchStart={startRecording}
+                    onTouchEnd={stopRecording}
+                    disabled={isLoading || isTranscribing}
                     title="Удерживайте для записи голосового сообщения"
                   >
-                    🎤
+                    {isTranscribing ? '⏳' : '🎤'}
                   </button>
                   <button
                     className="send-btn"
                     onClick={() => sendMessage()}
-                    disabled={isLoading || !inputMessage.trim()}
+                    disabled={isLoading || !inputMessage.trim() || isTranscribing}
                   >
                     Отправить
                   </button>
                 </div>
               </div>
+              {isRecording && (
+                <div className="recording-indicator">
+                  🔴 Запись... Отпустите кнопку чтобы отправить
+                </div>
+              )}
             </div>
           ) : (
             <div className="voice-mode-controls">
