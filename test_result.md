@@ -237,10 +237,8 @@ metadata:
 
 test_plan:
   current_focus:
-    - "MongoDB Chat History Storage"
     - "Text Chat Interface"
-  stuck_tasks:
-    - "MongoDB Chat History Storage"
+  stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
