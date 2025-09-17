@@ -17,12 +17,19 @@ class RealtimeAudioChat {
     try {
       console.log('Initializing Voice Mode...');
       
-      // Get session from backend
+      // Get session from backend with Constitution instructions
+      const sessionData = {
+        instructions: "Ты — виртуальный консультант по Конституции Республики Беларусь. Язык ответов: русский. Источник: только Конституция Республики Беларусь, редакция 2022 года. Отвечай строго по фактам, цитируя или кратко пересказывая нормы. Всегда указывай номер статьи, если он известен. Если вопрос выходит за рамки Конституции, отвечай вежливо: 'Я могу отвечать только по Конституции Республики Беларусь'. Не додумывай, не придумывай информацию. Формат ответа: краткий основной ответ + 'Справка: Статья NN …'.",
+        voice: "alloy",
+        language: "ru"
+      };
+      
       const tokenResponse = await fetch(`${BACKEND_URL}/api/voice/realtime/session`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
-        }
+        },
+        body: JSON.stringify(sessionData)
       });
       
       if (!tokenResponse.ok) {
@@ -64,7 +71,7 @@ class RealtimeAudioChat {
       };
 
       await this.peerConnection.setRemoteDescription(answer);
-      console.log("WebRTC connection established");
+      console.log("WebRTC connection established with Constitution instructions");
       
       if (this.onStatusChange) {
         this.onStatusChange('connected');
