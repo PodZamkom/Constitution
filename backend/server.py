@@ -175,34 +175,25 @@ try:
                 # Register voice mode router with custom session handler
                 voice_router = APIRouter()
                 
-                # Custom session endpoint to handle instructions
+                # Custom session endpoint to handle Алеся instructions
                 @voice_router.post("/realtime/session")
                 async def custom_realtime_session(request: Request):
                     try:
                         body = await request.json() if hasattr(request, 'json') else {}
                         
-                        # Extract voice and model preferences
-                        voice = body.get('voice', 'nova')  # Default to nova (female voice)
+                        # Extract voice and model preferences with Алеся defaults
+                        voice = body.get('voice', 'nova')  # Female voice for Алеся
                         model = body.get('model', 'gpt-4o-realtime-preview')
-                        instructions = body.get('instructions', SYSTEM_PROMPT)
                         
-                        logger.info(f"Creating session with voice: {voice}, instructions: {instructions[:50]}...")
+                        logger.info(f"Creating Voice Mode session for Алеся with voice: {voice}")
                         
-                        # Create session with custom parameters
-                        session_data = VOICE_CHAT.create_ephemeral_session_for_audio_chat(
+                        # Create session - ВАЖНО: await корутину
+                        session_data = await VOICE_CHAT.create_ephemeral_session_for_audio_chat(
                             voice=voice,
                             model=model
                         )
                         
-                        # Add instructions to session data if possible
-                        if 'session_config' not in session_data:
-                            session_data['session_config'] = {}
-                        
-                        session_data['session_config']['instructions'] = instructions
-                        session_data['session_config']['voice'] = voice
-                        session_data['session_config']['language'] = body.get('language', 'ru')
-                        
-                        logger.info("Voice Mode session created with Алеся instructions")
+                        logger.info("Voice Mode session created successfully for Алеся")
                         return session_data
                         
                     except Exception as e:
@@ -212,6 +203,7 @@ try:
                 # Use default negotiate endpoint
                 @voice_router.post("/realtime/negotiate")
                 async def realtime_negotiate(request: Request):
+                    sdp_body = await request.body()
                     return await VOICE_CHAT.negotiate_connection(request)
                 
                 app.include_router(voice_router, prefix="/api/voice")
