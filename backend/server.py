@@ -201,7 +201,7 @@ async def stream_chat(session_id: str, message: str):
                     api_key=api_key,
                     session_id=session_id,
                     system_message=SYSTEM_PROMPT
-                ).with_model("openai", "gpt-5")
+                ).with_model("openai", "gpt-4")
                 
                 user_msg = UserMessage(text=message)
                 ai_response = await chat.send_message(user_msg)
