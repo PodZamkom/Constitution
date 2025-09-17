@@ -179,7 +179,7 @@ async def get_chat_history(session_id: str):
             {"session_id": session_id}
         ).sort("timestamp", 1).to_list(length=100)
         
-        # Parse dates from mongo
+        # Parse dates and ObjectIds from mongo
         parsed_history = [parse_from_mongo(msg) for msg in history]
         return {"session_id": session_id, "messages": parsed_history}
     
