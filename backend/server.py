@@ -168,13 +168,17 @@ try:
             if api_key:
                 logger.info("Initializing OpenAI Voice Mode...")
                 
-                # Initialize with Russian language and Constitution system prompt
-                VOICE_CHAT = OpenAIChatRealtime(
-                    api_key=api_key,
-                    system_message=SYSTEM_PROMPT,  # Use same Constitution prompt
-                    language="ru",  # Russian language for voice responses
-                    voice="alloy"  # Use a clear voice
-                )
+                # Initialize OpenAI Voice Mode with Russian language settings
+                VOICE_CHAT = OpenAIChatRealtime(api_key=api_key)
+                
+                # Configure Voice Mode for Russian language and Constitution context
+                if hasattr(VOICE_CHAT, 'configure'):
+                    VOICE_CHAT.configure(
+                        language="ru",
+                        voice="alloy",
+                        instructions=SYSTEM_PROMPT
+                    )
+                    logger.info("Voice Mode configured with Russian language and Constitution instructions")
                 
                 # Register voice mode router
                 voice_router = APIRouter()
@@ -182,7 +186,7 @@ try:
                 app.include_router(voice_router, prefix="/api/voice")
                 
                 VOICE_MODE_AVAILABLE = True
-                logger.info("OpenAI Voice Mode initialized successfully with Russian language and Constitution prompt")
+                logger.info("OpenAI Voice Mode initialized successfully")
             else:
                 logger.warning("OpenAI API key not found, Voice Mode unavailable")
         except Exception as e:
