@@ -774,78 +774,62 @@ body {
   }
 }
 
-@media (max-width: 320px) {
-  .header-content {
-    gap: 0.75rem;
-  }
-
-  .title {
-    font-size: 0.9rem;
-    line-height: 1.2;
-  }
-
-  .symbols {
-    gap: 0.3rem;
-  }
-
-  .flag {
-    width: 40px;
-    height: 27px;
-  }
-
-  .coat-of-arms {
-    width: 32px;
-    height: 32px;
-  }
-
-  .mode-btn {
-    padding: 0.3rem 0.6rem;
-    font-size: 0.8rem;
-  }
-
-  .main-content {
-    padding: 0.3rem;
-  }
-
-  .chat-messages {
-    padding: 1rem;
-    max-height: 45vh;
-  }
-
-  .message-content {
-    padding: 0.8rem 1rem;
-    font-size: 0.9rem;
-  }
-
+@media (max-width: 375px) {
+  /* iPhone X and similar narrow screens */
   .input-container {
-    padding: 0.6rem 1rem;
+    padding: 0.5rem 0.8rem;
   }
 
   .input-container textarea {
-    font-size: 0.9rem;
+    font-size: 0.85rem;
   }
 
   .record-btn {
-    width: 36px;
-    height: 36px;
-    font-size: 1rem;
-  }
-
-  .send-btn {
-    padding: 0.6rem 1.2rem;
+    width: 30px;
+    height: 30px;
     font-size: 0.9rem;
   }
 
-  .avatar {
-    max-width: 180px;
-    height: 220px;
+  .send-btn {
+    padding: 0.5rem 0.8rem;
+    font-size: 0.8rem;
   }
 
-  .welcome-message {
-    padding: 1.5rem;
+  .chat-input {
+    padding: 0.6rem;
   }
 
-  .welcome-message p {
-    font-size: 1rem;
+  .voice-connect-btn {
+    padding: 0.7rem 1.2rem;
+    font-size: 0.95rem;
+  }
+}
+
+@media (max-width: 360px) {
+  /* Very small Android screens */
+  .header-content {
+    gap: 0.5rem;
+  }
+
+  .title {
+    font-size: 0.75rem;
+  }
+
+  .flag {
+    width: 35px;
+    height: 23px;
+  }
+
+  .coat-of-arms {
+    width: 25px;
+    height: 25px;
+  }
+
+  .input-container {
+    padding: 0.4rem 0.6rem;
+  }
+
+  .input-buttons {
+    gap: 0.3rem;
   }
 }
