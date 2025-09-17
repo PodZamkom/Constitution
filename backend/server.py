@@ -22,8 +22,13 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 # MongoDB setup
-client = motor.motor_asyncio.AsyncIOMotorClient(os.environ.get("MONGO_URL"))
-db = client[os.environ.get("DB_NAME", "belarus_constitution")]
+MONGO_URL = os.environ.get("MONGO_URL")
+if MONGO_URL:
+    client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URL)
+    db = client[os.environ.get("DB_NAME", "belarus_constitution")]
+else:
+    client = None
+    db = None
 
 # CORS
 origins = os.environ.get("CORS_ORIGINS", "*").split(",")
@@ -60,7 +65,7 @@ class ChatMessage(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
 
@@ -327,58 +332,66 @@ async def get_capabilities():
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
-        # Save user message
-        user_message = ChatMessage(
-            id=str(uuid.uuid4()),
-            session_id=request.session_id,
-            content=request.message,
-            role="user",
-            timestamp=datetime.now(timezone.utc)
-        )
-        
-        user_msg_dict = prepare_for_mongo(user_message.dict())
-        await db.messages.insert_one(user_msg_dict)
+        # Save user message (if MongoDB available)
+        if db:
+            user_message = ChatMessage(
+                id=str(uuid.uuid4()),
+                session_id=request.session_id,
+                content=request.message,
+                role="user",
+                timestamp=datetime.now(timezone.utc)
+            )
+            
+            user_msg_dict = prepare_for_mongo(user_message.model_dump())
+            await db.messages.insert_one(user_msg_dict)
 
-        # Get chat history
-        history = await db.messages.find(
-            {"session_id": request.session_id}
-        ).sort("timestamp", 1).to_list(length=50)
+            # Get chat history
+            history = await db.messages.find(
+                {"session_id": request.session_id}
+            ).sort("timestamp", 1).to_list(length=50)
+        else:
+            # No MongoDB - just log the message
+            logger.info(f"User message: {request.message}")
 
         # Generate response using OpenAI
         if not INTEGRATION_AVAILABLE:
             # Fallback response if integration not available
-            ai_response = "Интеграция с LLM временно недоступна. Я могу отвечать только по Конституции Республики Беларусь."
+            ai_response = f"Привет! Меня зовут Алеся. Я специалист по Конституции Республики Беларусь редакции 2022 года. Вы спросили: '{request.message}'. К сожалению, интеграция с LLM временно недоступна, но я готова помочь вам с вопросами по Конституции Беларуси, как только сервис будет восстановлен."
         else:
             # Initialize LLM chat
             api_key = os.environ.get("OPENAI_API_KEY")
             if not api_key:
-                raise HTTPException(status_code=500, detail="OpenAI API key not configured")
-            
-            chat = LlmChat(
-                api_key=api_key,
-                session_id=request.session_id,
-                system_message=SYSTEM_PROMPT
-            ).with_model("openai", "gpt-4")
-            
-            user_msg = UserMessage(text=request.message)
-            ai_response = await chat.send_message(user_msg)
+                ai_response = f"Привет! Меня зовут Алеся. Я специалист по Конституции Республики Беларусь редакции 2022 года. Вы спросили: '{request.message}'. К сожалению, API ключ OpenAI не настроен, но я готова помочь вам с вопросами по Конституции Беларуси, как только сервис будет настроен."
+            else:
+                chat = LlmChat(
+                    api_key=api_key,
+                    session_id=request.session_id,
+                    system_message=SYSTEM_PROMPT
+                ).with_model("openai", "gpt-4")
+                
+                user_msg = UserMessage(text=request.message)
+                ai_response = await chat.send_message(user_msg)
 
-        # Save assistant response
-        assistant_message = ChatMessage(
-            id=str(uuid.uuid4()),
-            session_id=request.session_id,
-            content=ai_response,
-            role="assistant",
-            timestamp=datetime.now(timezone.utc)
-        )
-        
-        assistant_msg_dict = prepare_for_mongo(assistant_message.dict())
-        await db.messages.insert_one(assistant_msg_dict)
+        # Save assistant response (if MongoDB available)
+        if db:
+            assistant_message = ChatMessage(
+                id=str(uuid.uuid4()),
+                session_id=request.session_id,
+                content=ai_response,
+                role="assistant",
+                timestamp=datetime.now(timezone.utc)
+            )
+            
+            assistant_msg_dict = prepare_for_mongo(assistant_message.model_dump())
+            await db.messages.insert_one(assistant_msg_dict)
+        else:
+            # No MongoDB - just log the response
+            logger.info(f"Assistant response: {ai_response}")
 
         return ChatResponse(
             response=ai_response,
             session_id=request.session_id,
-            message_id=assistant_message.id
+            message_id=str(uuid.uuid4())
         )
 
     except Exception as e:
@@ -480,7 +493,7 @@ async def stream_chat(session_id: str, message: str):
                 timestamp=datetime.now(timezone.utc)
             )
             
-            user_msg_dict = prepare_for_mongo(user_message.dict())
+            user_msg_dict = prepare_for_mongo(user_message.model_dump())
             await db.messages.insert_one(user_msg_dict)
 
             # Generate response
@@ -520,7 +533,7 @@ async def stream_chat(session_id: str, message: str):
                     timestamp=datetime.now(timezone.utc)
                 )
                 
-                assistant_msg_dict = prepare_for_mongo(assistant_message.dict())
+                assistant_msg_dict = prepare_for_mongo(assistant_message.model_dump())
                 await db.messages.insert_one(assistant_msg_dict)
                 
                 # Simulate streaming
