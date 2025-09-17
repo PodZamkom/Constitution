@@ -22,7 +22,11 @@ class RealtimeAudioChat {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
-        }
+        },
+        body: JSON.stringify({
+          voice: "shimmer", // Female voice for Алеся
+          model: "gpt-4o-realtime-preview-2024-12-17"
+        })
       });
       
       if (!tokenResponse.ok) {
