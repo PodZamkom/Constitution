@@ -355,7 +355,11 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "message": "Server is running"}
+    return {"status": "ok", "message": "Server is running", "port": os.environ.get("PORT", "unknown")}
+
+@app.get("/api/health")
+async def api_health():
+    return {"status": "ok", "message": "API is running"}
 
 @app.get("/api/capabilities")
 async def get_capabilities():
@@ -596,4 +600,11 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     print(f"Starting server on port {port}")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    print(f"Environment: {os.environ.get('RAILWAY_ENVIRONMENT', 'local')}")
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=port,
+        log_level="info",
+        access_log=True
+    )

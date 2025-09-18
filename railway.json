@@ -4,6 +4,8 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "chmod +x run.sh && ./run.sh"
+    "startCommand": "python startup.py",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 300
   }
 }
