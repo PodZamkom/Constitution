@@ -113,12 +113,35 @@ def generate_local_response(message):
     message_lower = message.lower()
     
     # Greeting responses
-    if any(word in message_lower for word in ['привет', 'здравствуй', 'добрый день', 'добрый вечер']):
+    if any(word in message_lower for word in ['привет', 'здравствуй', 'добрый день', 'добрый вечер', 'hello', 'hi']):
         return "Привет! Меня зовут Алеся. Я ваш консультант по Конституции Республики Беларусь редакции 2022 года. Я знаю наизусть всю Конституцию и помогу вам с любыми вопросами о ней. Что вас интересует?"
     
+    # Constitution articles
+    if 'статья' in message_lower:
+        if '1' in message_lower or 'первая' in message_lower:
+            return "Статья 1 Конституции РБ: Республика Беларусь - унитарное демократическое социальное правовое государство. Республика Беларусь обладает верховенством и полнотой власти на своей территории, самостоятельно осуществляет внутреннюю и внешнюю политику."
+        elif '2' in message_lower or 'вторая' in message_lower:
+            return "Статья 2 Конституции РБ: Человек, его права, свободы и гарантии их реализации являются высшей ценностью и целью общества и государства."
+        elif '3' in message_lower or 'третья' in message_lower:
+            return "Статья 3 Конституции РБ: Единственным источником государственной власти и носителем суверенитета в Республике Беларусь является народ."
+        else:
+            return "Вы спрашиваете о статье Конституции. Укажите номер статьи (например, 'статья 1' или 'статья 15'), и я дам вам точный текст и объяснение."
+    
+    # Rights and freedoms
+    if any(word in message_lower for word in ['права', 'свободы', 'право на']):
+        return "Права и свободы граждан закреплены в разделе II Конституции РБ (статьи 21-63). Основные права включают: право на жизнь, свободу, неприкосновенность личности, свободу мнений и убеждений, право на образование, здравоохранение, труд. Какое конкретное право вас интересует?"
+    
+    # Government structure
+    if any(word in message_lower for word in ['президент', 'парламент', 'правительство', 'суд']):
+        return "Согласно Конституции РБ, государственная власть в Республике Беларусь осуществляется на основе разделения ее на законодательную, исполнительную и судебную. Президент является Главой государства, Национальное собрание - парламент, Совет Министров - правительство. Что именно вас интересует?"
+    
     # Constitution-related responses
-    if any(word in message_lower for word in ['конституция', 'статья', 'права', 'обязанности', 'государство']):
+    if any(word in message_lower for word in ['конституция', 'обязанности', 'государство', 'закон']):
         return f"Отличный вопрос о Конституции Республики Беларусь! Вы спросили: '{message}'. Согласно Конституции РБ редакции 2022 года, основные принципы нашего государства включают народовластие, верховенство права, разделение властей и социальную справедливость. Если вас интересует конкретная статья, укажите номер, и я дам подробный ответ."
+    
+    # Help requests
+    if any(word in message_lower for word in ['помощь', 'помоги', 'что ты умеешь', 'что можешь']):
+        return "Я могу помочь вам с любыми вопросами по Конституции Республики Беларусь: объяснить статьи, рассказать о правах и обязанностях граждан, структуре государственной власти, принципах правового государства. Просто спросите!"
     
     # General responses
     return f"Меня зовут Алеся, и я могу отвечать только по вопросам Конституции Республики Беларусь. Вы спросили: '{message}'. Пожалуйста, задайте вопрос о Конституции, и я с радостью помогу вам разобраться в любых правовых аспектах нашего основного закона."
@@ -373,22 +396,19 @@ async def chat(request: ChatRequest):
             if not api_key:
                 ai_response = f"Привет! Меня зовут Алеся. Я специалист по Конституции Республики Беларусь редакции 2022 года. Вы спросили: '{request.message}'. К сожалению, API ключ OpenAI не настроен, но я готова помочь вам с вопросами по Конституции Беларуси, как только сервис будет настроен."
             else:
-                try:
-                    client = openai.OpenAI(api_key=api_key)
-                    response = client.chat.completions.create(
-                        model="gpt-4",
-                        messages=[
-                            {"role": "system", "content": SYSTEM_PROMPT},
-                            {"role": "user", "content": request.message}
-                        ],
-                        max_tokens=1000,
-                        temperature=0.7
-                    )
-                    ai_response = response.choices[0].message.content
-                except Exception as e:
-                    logger.error(f"OpenAI API error: {e}")
-                    # Fallback to local response
-                    ai_response = generate_local_response(request.message)
+                # ТОЛЬКО ChatGPT API - НАПРЯМУЮ!
+                client = openai.OpenAI(api_key=api_key)
+                
+                response = client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": request.message}
+                    ],
+                    max_tokens=1000,
+                    temperature=0.7
+                )
+                ai_response = response.choices[0].message.content
 
         # Save assistant response (if MongoDB available)
         if db:
