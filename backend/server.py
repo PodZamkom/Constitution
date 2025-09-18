@@ -3,13 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
-import motor.motor_asyncio
+# MongoDB imports removed for Railway deployment
+# import motor.motor_asyncio
+# from bson import ObjectId
 import os
 from dotenv import load_dotenv
 import uuid
 from datetime import datetime, timezone
 import json
-from bson import ObjectId
 import tempfile
 import logging
 
@@ -21,14 +22,14 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# MongoDB setup
-MONGO_URL = os.environ.get("MONGO_URL")
-if MONGO_URL:
-    client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URL)
-    db = client[os.environ.get("DB_NAME", "belarus_constitution")]
-else:
-    client = None
-    db = None
+# MongoDB setup - disabled for Railway deployment
+# MONGO_URL = os.environ.get("MONGO_URL")
+# if MONGO_URL:
+#     client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URL)
+#     db = client[os.environ.get("DB_NAME", "belarus_constitution")]
+# else:
+client = None
+db = None
 
 # CORS
 origins = os.environ.get("CORS_ORIGINS", "*").split(",")
