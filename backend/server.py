@@ -355,11 +355,11 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "message": "Server is running", "port": os.environ.get("PORT", "unknown")}
+    return {"status": "ok"}
 
 @app.get("/api/health")
 async def api_health():
-    return {"status": "ok", "message": "API is running"}
+    return {"status": "ok"}
 
 @app.get("/api/capabilities")
 async def get_capabilities():
