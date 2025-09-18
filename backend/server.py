@@ -3,9 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional
-# MongoDB imports removed for Railway deployment
-# import motor.motor_asyncio
-# from bson import ObjectId
+# MongoDB imports - only ObjectId needed for PyObjectId
+from bson import ObjectId
 import os
 from dotenv import load_dotenv
 import uuid
@@ -376,21 +375,21 @@ async def chat(request: ChatRequest):
     try:
         # Save user message (if MongoDB available)
         if db:
-            user_message = ChatMessage(
-                id=str(uuid.uuid4()),
-                session_id=request.session_id,
-                content=request.message,
-                role="user",
-                timestamp=datetime.now(timezone.utc)
-            )
-            
+        user_message = ChatMessage(
+            id=str(uuid.uuid4()),
+            session_id=request.session_id,
+            content=request.message,
+            role="user",
+            timestamp=datetime.now(timezone.utc)
+        )
+        
             user_msg_dict = prepare_for_mongo(user_message.model_dump())
-            await db.messages.insert_one(user_msg_dict)
+        await db.messages.insert_one(user_msg_dict)
 
-            # Get chat history
-            history = await db.messages.find(
-                {"session_id": request.session_id}
-            ).sort("timestamp", 1).to_list(length=50)
+        # Get chat history
+        history = await db.messages.find(
+            {"session_id": request.session_id}
+        ).sort("timestamp", 1).to_list(length=50)
         else:
             # No MongoDB - just log the message
             logger.info(f"User message: {request.message}")
@@ -421,16 +420,16 @@ async def chat(request: ChatRequest):
 
         # Save assistant response (if MongoDB available)
         if db:
-            assistant_message = ChatMessage(
-                id=str(uuid.uuid4()),
-                session_id=request.session_id,
-                content=ai_response,
-                role="assistant",
-                timestamp=datetime.now(timezone.utc)
-            )
-            
+        assistant_message = ChatMessage(
+            id=str(uuid.uuid4()),
+            session_id=request.session_id,
+            content=ai_response,
+            role="assistant",
+            timestamp=datetime.now(timezone.utc)
+        )
+        
             assistant_msg_dict = prepare_for_mongo(assistant_message.model_dump())
-            await db.messages.insert_one(assistant_msg_dict)
+        await db.messages.insert_one(assistant_msg_dict)
         else:
             # No MongoDB - just log the response
             logger.info(f"Assistant response: {ai_response}")
