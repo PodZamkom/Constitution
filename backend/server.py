@@ -353,6 +353,10 @@ except ImportError as e:
 async def root():
     return {"message": "AI-ассистент по Конституции Республики Беларусь"}
 
+@app.get("/health")
+async def health():
+    return {"status": "ok", "message": "Server is running"}
+
 @app.get("/api/capabilities")
 async def get_capabilities():
     """Get available capabilities"""
@@ -590,4 +594,6 @@ async def stream_chat(session_id: str, message: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    port = int(os.environ.get("PORT", 8000))
+    print(f"Starting server on port {port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)

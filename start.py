@@ -3,10 +3,14 @@ import os
 import uvicorn
 
 if __name__ == "__main__":
+    # Railway передает порт через $PORT
     port = int(os.environ.get("PORT", 8000))
+    print(f"Starting server on port {port}")
+    
     uvicorn.run(
         "backend.server:app",
         host="0.0.0.0",
         port=port,
-        reload=False
+        reload=False,
+        log_level="info"
     )
