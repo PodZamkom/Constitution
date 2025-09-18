@@ -1,5 +1,5 @@
 // Основная логика приложения для GitHub Pages
-const BACKEND_URL = 'https://your-hosting-domain.com'; // Production backend API
+const BACKEND_URL = 'https://your-railway-app.railway.app'; // Railway backend API
 let sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 let voiceMode = false;
 let voiceChat = null;
@@ -30,7 +30,8 @@ class RealtimeAudioChat {
                 },
                 body: JSON.stringify({
                     voice: "shimmer", // Female voice for Алеся
-                    model: "gpt-4o-realtime-preview-2024-12-17"
+                    model: "gpt-4o-realtime-preview-2024-12-17",
+                    instructions: "Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
                 })
             });
             
