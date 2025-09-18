@@ -375,21 +375,21 @@ async def chat(request: ChatRequest):
     try:
         # Save user message (if MongoDB available)
         if db:
-        user_message = ChatMessage(
-            id=str(uuid.uuid4()),
-            session_id=request.session_id,
-            content=request.message,
-            role="user",
-            timestamp=datetime.now(timezone.utc)
-        )
-        
+            user_message = ChatMessage(
+                id=str(uuid.uuid4()),
+                session_id=request.session_id,
+                content=request.message,
+                role="user",
+                timestamp=datetime.now(timezone.utc)
+            )
+            
             user_msg_dict = prepare_for_mongo(user_message.model_dump())
-        await db.messages.insert_one(user_msg_dict)
+            await db.messages.insert_one(user_msg_dict)
 
-        # Get chat history
-        history = await db.messages.find(
-            {"session_id": request.session_id}
-        ).sort("timestamp", 1).to_list(length=50)
+            # Get chat history
+            history = await db.messages.find(
+                {"session_id": request.session_id}
+            ).sort("timestamp", 1).to_list(length=50)
         else:
             # No MongoDB - just log the message
             logger.info(f"User message: {request.message}")
