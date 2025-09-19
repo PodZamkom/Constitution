@@ -62,6 +62,7 @@ class RealtimeAudioChat {
           { urls: 'stun:stun1.l.google.com:19302' },
         ],
       });
+      this.peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
       this.peerConnection.onconnectionstatechange = () => {
         if (!this.onStatusChange) {
           return;
@@ -142,35 +143,47 @@ class RealtimeAudioChat {
       }
     });
 
+    const audioTracks = this.localStream.getAudioTracks();
+    if (!audioTracks.length) {
+      throw new Error('Не удалось получить доступ к микрофону');
+    }
+
     this.localStream.getTracks().forEach(track => {
       this.peerConnection.addTrack(track, this.localStream);
     });
   }
 
   setupDataChannel() {
-    this.dataChannel = this.peerConnection.createDataChannel("oai-events");
+    this.dataChannel = this.peerConnection.createDataChannel("oai.events");
     this.dataChannel.onmessage = (event) => {
       console.log("Received event:", event.data);
       // Handle different event types here
     };
-    
+
     this.dataChannel.onopen = () => {
       console.log("Data channel opened");
-      if (this.onStatusChange) {
-        this.onStatusChange('ready');
-      }
-
-      if (this.instructions) {
-        try {
+      try {
+        if (this.instructions) {
           this.dataChannel.send(JSON.stringify({
             type: 'session.update',
             session: {
               instructions: this.instructions,
             },
           }));
-        } catch (error) {
-          console.warn('Failed to send session instructions', error);
         }
+
+        this.dataChannel.send(JSON.stringify({
+          type: 'response.create',
+          response: {
+            modalities: ['audio'],
+          },
+        }));
+      } catch (error) {
+        console.warn('Failed to initialise realtime conversation', error);
+      }
+
+      if (this.onStatusChange) {
+        this.onStatusChange('ready');
       }
     };
 
