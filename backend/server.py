@@ -197,57 +197,40 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 # Voice Mode endpoints
-if VOICE_MODE_AVAILABLE:
-    # Initialize OpenAI Voice Mode
-    VOICE_CHAT = None
-    
-    @app.on_event("startup")
-    async def load_voice_mode():
-        global VOICE_CHAT, VOICE_MODE_AVAILABLE
+@app.post("/api/voice/realtime/session")
+async def create_aleya_session(request: Request):
+    """Create session with Алеся system prompt"""
+    try:
+        if not VOICE_MODE_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Voice Mode not available")
+        
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+        
+        # Get request body if any
+        body = {}
         try:
-            api_key = os.environ.get("OPENAI_API_KEY")
-            if api_key:
-                logger.info("Initializing OpenAI Voice Mode for Алеся...")
-                
-                # Create custom router to handle Алеся system prompt
-                voice_router = APIRouter()
-                
-                @voice_router.post("/realtime/session")
-                async def create_aleya_session(request: Request):
-                    """Create session with Алеся system prompt"""
-                    try:
-                        # Get request body if any
-                        body = {}
-                        try:
-                            body = await request.json()
-                        except:
-                            pass
-                        
-                        # Create OpenAI client
-                        client = OpenAI(api_key=api_key)
-                        
-                        # Create session with custom instructions
-                        session = client.beta.realtime.sessions.create(
-                            model="gpt-4o-realtime-preview-2024-12-17",
-                            voice="shimmer",
-                            instructions="Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
-                        )
-                        
-                        return {"session_id": session.id}
-                    except Exception as e:
-                        logger.error(f"Error creating voice session: {e}")
-                        raise HTTPException(status_code=500, detail=str(e))
-                
-                # Include voice router
-                app.include_router(voice_router, prefix="/api/voice")
-                
-                logger.info("OpenAI Voice Mode for Алеся initialized successfully")
-            else:
-                logger.warning("OpenAI API key not found, Voice Mode disabled")
-                VOICE_MODE_AVAILABLE = False
-        except Exception as e:
-            logger.error(f"Failed to initialize Voice Mode: {e}")
-            VOICE_MODE_AVAILABLE = False
+            body = await request.json()
+        except:
+            pass
+        
+        # Create OpenAI client
+        client = OpenAI(api_key=api_key)
+        
+        # Create session with custom instructions
+        session = client.beta.realtime.sessions.create(
+            model="gpt-4o-realtime-preview-2024-12-17",
+            voice="shimmer",
+            instructions="Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
+        )
+        
+        return {"session_id": session.id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating voice session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Streaming chat endpoint
 @app.post("/api/chat/stream")
