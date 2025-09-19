@@ -11,6 +11,7 @@ from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.concurrency import run_in_threadpool
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
@@ -143,13 +144,6 @@ def _get_openai_client() -> OpenAI:
     if not api_key:
         raise HTTPException(status_code=503, detail="OpenAI API key is missing")
     return OpenAI(api_key=api_key)
-
-
-def _get_api_key() -> str:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="OpenAI API key is missing")
-    return api_key
 
 
 def _append_message(session_id: str, role: str, content: str) -> ChatMessage:
@@ -289,30 +283,30 @@ async def voice_session(payload: VoiceSessionRequest) -> dict:
         or SYSTEM_PROMPT
     )
 
-    url = f"{OPENAI_API_BASE.rstrip('/')}/realtime/sessions"
-    headers = {
-        "Authorization": f"Bearer {_get_api_key()}",
-        "Content-Type": "application/json",
-        "OpenAI-Beta": "realtime=v1",
-    }
+    client = _get_openai_client()
 
-    payload_dict: dict[str, object] = {"model": model, "voice": voice}
+    request_payload: dict[str, object] = {"model": model, "voice": voice}
     if instructions:
-        payload_dict["instructions"] = instructions
+        request_payload["instructions"] = instructions
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(url, json=payload_dict, headers=headers)
-    except httpx.HTTPError as exc:  # noqa: PERF203
+        session = await run_in_threadpool(
+            lambda: client.realtime.sessions.create(**request_payload)
+        )
+    except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
 
-    if response.status_code >= 400:
-        raise HTTPException(status_code=response.status_code, detail=_http_error_detail(response))
+    if hasattr(session, "model_dump"):
+        session_payload = session.model_dump()
+    else:  # pragma: no cover - fallback for older client versions
+        session_payload = json.loads(session.model_dump_json())
 
-    try:
-        session_payload = response.json()
-    except json.JSONDecodeError as exc:  # noqa: PERF203
-        raise HTTPException(status_code=502, detail="Invalid JSON from OpenAI Realtime API") from exc
+    client_secret = session_payload.get("client_secret")
+    secret_value = None
+    if isinstance(client_secret, dict):
+        secret_value = client_secret.get("value")
+    if not secret_value:
+        raise HTTPException(status_code=502, detail="OpenAI realtime session missing client_secret")
 
     session_payload.setdefault("model", model)
     session_payload.setdefault("voice", voice)
