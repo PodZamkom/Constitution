@@ -290,15 +290,32 @@ async def voice_session(payload: VoiceSessionRequest) -> dict:
         or SYSTEM_PROMPT
     )
 
-    # For Realtime API, we return configuration for client-side connection
-    # The actual WebSocket connection will be established by the frontend
-    session_payload = {
-        "model": model,
-        "voice": voice,
-        "instructions": instructions,
-        "api_key": os.getenv("OPENAI_API_KEY"),
-        "api_base": OPENAI_API_BASE
-    }
+    client = _get_openai_client()
+
+    request_payload: dict[str, object] = {"model": model, "voice": voice}
+    if instructions:
+        request_payload["instructions"] = instructions
+
+    try:
+        session = await run_in_threadpool(
+            lambda: client.beta.realtime.sessions.create(**request_payload)
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
+
+    if hasattr(session, "model_dump"):
+        session_payload = session.model_dump()
+    else:  # pragma: no cover - fallback for older client versions
+        session_payload = json.loads(session.model_dump_json())
+
+    # Ensure we have the required client_secret structure
+    if "client_secret" not in session_payload:
+        raise HTTPException(status_code=502, detail="OpenAI realtime session missing client_secret")
+
+    session_payload.setdefault("model", model)
+    session_payload.setdefault("voice", voice)
+    if instructions:
+        session_payload.setdefault("instructions", instructions)
 
     return session_payload
 
