@@ -312,49 +312,23 @@ async def voice_session(payload: VoiceSessionRequest) -> dict:
     if "client_secret" not in session_payload:
         raise HTTPException(status_code=502, detail="OpenAI realtime session missing client_secret")
 
+    # Extract client_secret value for WebSocket URL
+    client_secret = session_payload["client_secret"]
+    if isinstance(client_secret, dict) and "value" in client_secret:
+        client_secret_value = client_secret["value"]
+    else:
+        raise HTTPException(status_code=502, detail="Invalid client_secret format")
+
+    # Add WebSocket URL for direct connection to Realtime API
+    websocket_url = f"wss://api.openai.com/v1/realtime?model={model}&client_secret={client_secret_value}"
+    session_payload["websocket_url"] = websocket_url
+
     session_payload.setdefault("model", model)
     session_payload.setdefault("voice", voice)
     if instructions:
         session_payload.setdefault("instructions", instructions)
 
     return session_payload
-
-
-@app.post("/api/voice/realtime/negotiate")
-async def voice_negotiate(
-    request: Request,
-    authorization: str | None = Header(default=None),
-    x_openai_model: str | None = Header(default=None),
-) -> dict:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=400, detail="Missing Authorization bearer token")
-
-    offer_sdp = await request.body()
-    if not offer_sdp:
-        raise HTTPException(status_code=400, detail="SDP offer is required")
-
-    model = x_openai_model or _default_voice_model()
-
-    headers = {
-        "Authorization": authorization,
-        "Content-Type": "application/sdp",
-        "OpenAI-Beta": "realtime=v1",
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(
-                f"{OPENAI_API_BASE.rstrip('/')}/realtime?model={model}",
-                content=offer_sdp,
-                headers=headers,
-            )
-    except httpx.HTTPError as exc:  # noqa: PERF203
-        raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
-
-    if response.status_code >= 400:
-        raise HTTPException(status_code=response.status_code, detail=_http_error_detail(response))
-
-    return {"sdp": response.text}
 
 
 if __name__ == "__main__":

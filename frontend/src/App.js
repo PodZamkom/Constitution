@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
-const BACKEND_URL = 'https://web-production-9ed88.up.railway.app';
+const BACKEND_URL = 'http://localhost:8000';
 
-// Voice Mode WebRTC Class
+// Voice Mode WebSocket Class
 class RealtimeAudioChat {
   constructor({
     backendUrl,
@@ -11,24 +11,25 @@ class RealtimeAudioChat {
     model,
     instructions,
   }) {
-    this.peerConnection = null;
-    this.dataChannel = null;
+    this.websocket = null;
     this.audioElement = null;
-    this.sessionToken = null;
+    this.websocketUrl = null;
     this.sessionModel = model || "gpt-4o-realtime-preview-latest";
     this.backendUrl = backendUrl;
-    this.voiceName = voice || "alloy";
+    this.voiceName = voice || "verse";
     this.instructions = instructions || null;
     this.onStatusChange = null;
     this.onError = null;
     this.localStream = null;
+    this.mediaRecorder = null;
+    this.isRecording = false;
   }
 
   async init() {
     try {
       console.log('Initializing Voice Mode for Алеся...');
       
-      // Get session from backend (simplified)
+      // Get session from backend
       const tokenResponse = await fetch(`${this.backendUrl}/api/voice/realtime/session`, {
         method: "POST",
         headers: {
@@ -46,68 +47,25 @@ class RealtimeAudioChat {
       }
       
       const data = await tokenResponse.json();
-      if (!data.client_secret?.value) {
-        throw new Error("Failed to get session token");
+      if (!data.websocket_url) {
+        throw new Error("Failed to get WebSocket URL");
       }
-      // Save client_secret and model for subsequent negotiation
-      this.sessionToken = data.client_secret.value;
-      this.sessionModel = (data.model) || this.sessionModel;
+      
+      this.websocketUrl = data.websocket_url;
+      this.sessionModel = data.model || this.sessionModel;
+      this.instructions = data.instructions || this.instructions;
 
       console.log('Voice Mode session created successfully');
 
-      // Create and set up WebRTC peer connection
-      this.peerConnection = new RTCPeerConnection({
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-        ],
-      });
-      this.peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
-      this.peerConnection.onconnectionstatechange = () => {
-        if (!this.onStatusChange) {
-          return;
-        }
-        if (this.peerConnection.connectionState === 'connected') {
-          this.onStatusChange('connected');
-        } else if (this.peerConnection.connectionState === 'failed') {
-          this.onStatusChange('disconnected');
-        }
-      };
+      // Setup audio element for playback
       this.setupAudioElement();
+      
+      // Setup microphone access
       await this.setupLocalAudio();
-      this.setupDataChannel();
-
-      // Create and send offer
-      const offer = await this.peerConnection.createOffer();
-      await this.peerConnection.setLocalDescription(offer);
-
-      await this.waitForIceGatheringComplete();
-
-      // Send offer to backend and get answer
-      const response = await fetch(`${this.backendUrl}/api/voice/realtime/negotiate`, {
-        method: "POST",
-        body: offer.sdp,
-        headers: {
-          "Content-Type": "application/sdp",
-          // Pass client_secret so backend can negotiate with OpenAI Realtime session
-          "Authorization": `Bearer ${this.sessionToken}`,
-          "X-OpenAI-Model": this.sessionModel
-        }
-      });
       
-      if (!response.ok) {
-        throw new Error(`Negotiation failed: ${response.status}`);
-      }
+      // Connect to WebSocket
+      await this.connectWebSocket();
 
-      const { sdp: answerSdp } = await response.json();
-      const answer = {
-        type: "answer",
-        sdp: answerSdp
-      };
-
-      await this.peerConnection.setRemoteDescription(answer);
-      console.log("WebRTC connection established for Алеся Voice Mode");
-      
       if (this.onStatusChange) {
         this.onStatusChange('connected');
       }
@@ -128,10 +86,6 @@ class RealtimeAudioChat {
       this.audioElement.playsInline = true;
       document.body.appendChild(this.audioElement);
     }
-
-    this.peerConnection.ontrack = (event) => {
-      this.audioElement.srcObject = event.streams[0];
-    };
   }
 
   async setupLocalAudio() {
@@ -148,100 +102,148 @@ class RealtimeAudioChat {
       throw new Error('Не удалось получить доступ к микрофону');
     }
 
-    this.localStream.getTracks().forEach(track => {
-      this.peerConnection.addTrack(track, this.localStream);
+    // Setup MediaRecorder for audio capture
+    this.mediaRecorder = new MediaRecorder(this.localStream, {
+      mimeType: 'audio/webm;codecs=opus'
     });
+
+    this.mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0 && this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+        // Send audio data to WebSocket
+        this.websocket.send(event.data);
+      }
+    };
   }
 
-  setupDataChannel() {
-    this.dataChannel = this.peerConnection.createDataChannel("oai.events");
-    this.dataChannel.onmessage = (event) => {
-      console.log("Received event:", event.data);
-      // Handle different event types here
-    };
-
-    this.dataChannel.onopen = () => {
-      console.log("Data channel opened");
+  async connectWebSocket() {
+    return new Promise((resolve, reject) => {
       try {
-        if (this.instructions) {
-          this.dataChannel.send(JSON.stringify({
+        this.websocket = new WebSocket(this.websocketUrl);
+        
+        this.websocket.onopen = () => {
+          console.log('WebSocket connected to Realtime API');
+          
+          // Send session configuration
+          this.websocket.send(JSON.stringify({
             type: 'session.update',
             session: {
               instructions: this.instructions,
-            },
+              voice: this.voiceName,
+              model: this.sessionModel
+            }
           }));
-        }
 
-        this.dataChannel.send(JSON.stringify({
-          type: 'response.create',
-          response: {
-            modalities: ['audio'],
-          },
-        }));
-      } catch (error) {
-        console.warn('Failed to initialise realtime conversation', error);
-      }
-
-      if (this.onStatusChange) {
-        this.onStatusChange('ready');
-      }
-    };
-
-    this.dataChannel.onclose = () => {
-      console.log("Data channel closed");
-      if (this.onStatusChange) {
-        this.onStatusChange('disconnected');
-      }
-    };
-  }
-
-  async waitForIceGatheringComplete() {
-    if (this.peerConnection.iceGatheringState === 'complete') {
-      return;
-    }
-
-    await new Promise((resolve) => {
-      const checkState = () => {
-        if (this.peerConnection && this.peerConnection.iceGatheringState === 'complete') {
-          this.peerConnection.removeEventListener('icegatheringstatechange', checkState);
+          // Start audio recording
+          this.startRecording();
+          
           resolve();
-        }
-      };
+        };
 
-      this.peerConnection.addEventListener('icegatheringstatechange', checkState);
-      setTimeout(() => {
-        if (this.peerConnection) {
-          this.peerConnection.removeEventListener('icegatheringstatechange', checkState);
-        }
-        resolve();
-      }, 2000);
+        this.websocket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            this.handleWebSocketMessage(data);
+          } catch (error) {
+            console.error('Error parsing WebSocket message:', error);
+          }
+        };
+
+        this.websocket.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          if (this.onError) {
+            this.onError('WebSocket connection failed');
+          }
+          reject(error);
+        };
+
+        this.websocket.onclose = () => {
+          console.log('WebSocket disconnected');
+          if (this.onStatusChange) {
+            this.onStatusChange('disconnected');
+          }
+        };
+
+      } catch (error) {
+        reject(error);
+      }
     });
   }
 
+  handleWebSocketMessage(data) {
+    console.log('Received WebSocket message:', data);
+    
+    switch (data.type) {
+      case 'response.audio.delta':
+        // Handle audio response
+        if (data.delta && this.audioElement) {
+          // Convert base64 audio to blob and play
+          const audioBlob = this.base64ToBlob(data.delta, 'audio/mpeg');
+          const audioUrl = URL.createObjectURL(audioBlob);
+          this.audioElement.src = audioUrl;
+          this.audioElement.play();
+        }
+        break;
+        
+      case 'response.done':
+        console.log('Response completed');
+        break;
+        
+      case 'error':
+        console.error('Realtime API error:', data.error);
+        if (this.onError) {
+          this.onError(data.error.message || 'Unknown error');
+        }
+        break;
+        
+      default:
+        console.log('Unknown message type:', data.type);
+    }
+  }
+
+  startRecording() {
+    if (this.mediaRecorder && this.mediaRecorder.state === 'inactive') {
+      this.mediaRecorder.start(100); // Send data every 100ms
+      this.isRecording = true;
+      console.log('Started recording');
+    }
+  }
+
+  stopRecording() {
+    if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+      this.mediaRecorder.stop();
+      this.isRecording = false;
+      console.log('Stopped recording');
+    }
+  }
+
+  base64ToBlob(base64, mimeType) {
+    const byteCharacters = atob(base64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    return new Blob([byteArray], { type: mimeType });
+  }
+
+
   disconnect() {
-    if (this.dataChannel) {
-      this.dataChannel.close();
+    // Stop recording
+    this.stopRecording();
+
+    // Close WebSocket connection
+    if (this.websocket) {
+      this.websocket.close();
+      this.websocket = null;
     }
 
-    if (this.peerConnection) {
-      this.peerConnection.getSenders().forEach((sender) => {
-        if (sender.track) {
-          sender.track.stop();
-        }
-      });
-      this.peerConnection.getReceivers().forEach((receiver) => {
-        if (receiver.track) {
-          receiver.track.stop();
-        }
-      });
-      this.peerConnection.close();
-    }
-
+    // Stop local audio stream
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => track.stop());
       this.localStream = null;
     }
 
+    // Remove audio element
     if (this.audioElement) {
       document.body.removeChild(this.audioElement);
       this.audioElement = null;
