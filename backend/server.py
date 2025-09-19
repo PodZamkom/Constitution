@@ -289,29 +289,30 @@ async def voice_session(payload: VoiceSessionRequest) -> dict:
         or SYSTEM_PROMPT
     )
 
-    client = _get_openai_client()
+    url = f"{OPENAI_API_BASE.rstrip('/')}/realtime/sessions"
+    headers = {
+        "Authorization": f"Bearer {_get_api_key()}",
+        "Content-Type": "application/json",
+        "OpenAI-Beta": "realtime=v1",
+    }
+
+    payload_dict: dict[str, object] = {"model": model, "voice": voice}
+    if instructions:
+        payload_dict["instructions"] = instructions
 
     try:
-        session = client.realtime.sessions.create(
-            model=model,
-            voice=voice,
-            instructions=instructions if instructions else None,
-        )
-    except Exception as exc:  # noqa: BLE001
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(url, json=payload_dict, headers=headers)
+    except httpx.HTTPError as exc:  # noqa: PERF203
         raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
 
-    if hasattr(session, "model_dump"):
-        session_payload = session.model_dump()
-    elif hasattr(session, "dict"):
-        session_payload = session.dict()  # type: ignore[assignment]
-    else:
-        try:
-            session_payload = json.loads(session.model_dump_json())  # type: ignore[attr-defined]
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=502,
-                detail="Failed to serialize OpenAI realtime session response",
-            ) from exc
+    if response.status_code >= 400:
+        raise HTTPException(status_code=response.status_code, detail=_http_error_detail(response))
+
+    try:
+        session_payload = response.json()
+    except json.JSONDecodeError as exc:  # noqa: PERF203
+        raise HTTPException(status_code=502, detail="Invalid JSON from OpenAI Realtime API") from exc
 
     session_payload.setdefault("model", model)
     session_payload.setdefault("voice", voice)
