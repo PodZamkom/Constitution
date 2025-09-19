@@ -1,288 +1,361 @@
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, APIRouter, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
-from typing import List, Optional
-# MongoDB imports - only ObjectId needed for PyObjectId
-from bson import ObjectId
+import json
 import os
-from dotenv import load_dotenv
 import uuid
 from datetime import datetime, timezone
-import json
-import tempfile
-import logging
+from io import BytesIO
+from pathlib import Path
+from typing import Dict, List
 
-load_dotenv()
+import httpx
+from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from openai import OpenAI
+from pydantic import BaseModel, Field
 
-# Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+BASE_DIR = Path(__file__).resolve().parent.parent
+FRONTEND_BUILD_DIR = BASE_DIR / "frontend" / "build"
+FRONTEND_STATIC_DIR = FRONTEND_BUILD_DIR / "static"
+FRONTEND_INDEX = FRONTEND_BUILD_DIR / "index.html"
+DOCS_INDEX = BASE_DIR / "docs" / "index.html"
+DOCS_STATIC_DIR = BASE_DIR / "docs" / "static"
 
-app = FastAPI()
+OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 
-# Mount static files
-app.mount("/static", StaticFiles(directory="docs/static"), name="static")
 
-# MongoDB setup - disabled for Railway deployment
-# MONGO_URL = os.environ.get("MONGO_URL")
-# if MONGO_URL:
-#     client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URL)
-#     db = client[os.environ.get("DB_NAME", "belarus_constitution")]
-# else:
-client = None
-db = None
-
-# CORS - разрешаем все origins для Railway
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Разрешаем все origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Custom PyObjectId for MongoDB ObjectId handling
-class PyObjectId(ObjectId):
-    @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
-
-    @classmethod
-    def validate(cls, v):
-        if not ObjectId.is_valid(v):
-            raise ValueError("Invalid objectid")
-        return ObjectId(v)
-
-    @classmethod
-    def __modify_schema__(cls, field_schema):
-        field_schema.update(type="string")
-
-# Pydantic models
 class ChatMessage(BaseModel):
-    id: str
-    session_id: str
-    content: str
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     role: str
-    timestamp: datetime
+    content: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    session_id: str | None = None
+
 
 class ChatResponse(BaseModel):
     response: str
     session_id: str
     message_id: str
 
-# System prompt for Belarus Constitution AI
-SYSTEM_PROMPT = """Ты - Алеся, эксперт по Конституции Республики Беларусь редакции 2022 года. 
 
-Твоя задача:
-1. Отвечать только на вопросы, связанные с Конституцией Республики Беларусь
-2. Всегда указывать номер статьи и пункт при цитировании
-3. Объяснять сложные правовые понятия простым языком
-4. Если вопрос не относится к Конституции - вежливо отказываться и предлагать задать вопрос по Конституции
+class ChatHistoryResponse(BaseModel):
+    session_id: str
+    messages: List[ChatMessage]
 
-Отвечай на русском языке, будь дружелюбной и профессиональной."""
 
-# OpenAI integration
-try:
-    from openai import OpenAI
-    INTEGRATION_AVAILABLE = True
-    VOICE_MODE_AVAILABLE = True
-    logger.info("OpenAI integration available")
-except ImportError as e:
-    INTEGRATION_AVAILABLE = False
-    VOICE_MODE_AVAILABLE = False
-    logger.warning(f"OpenAI not available: {e}")
+class TranscriptionResponse(BaseModel):
+    transcription: str
+
+
+class VoiceSessionRequest(BaseModel):
+    voice: str | None = None
+    model: str | None = None
+    instructions: str | None = None
+
+
+app = FastAPI()
+
+SYSTEM_PROMPT = (
+    "Ты — Алеся, виртуальный консультант по Конституции Республики Беларусь.\n\n"
+    "ВАЖНО: Ты специалист по Конституции Республики Беларусь редакции 2022 года. "
+    "Ты знаешь ВСЮ Конституцию наизусть.\n\n"
+    "Язык ответов: ТОЛЬКО русский.\n\n"
+    "Твоя ЕДИНСТВЕННАЯ задача: консультирование по Конституции Республики Беларусь.\n\n"
+    "Твой источник знаний: ТОЛЬКО Конституция Республики Беларусь, редакция 2022 года.\n\n"
+    "Отвечай СТРОГО по фактам из Конституции, цитируя или кратко пересказывая нормы.\n\n"
+    "ВСЕГДА указывай номер статьи Конституции, если он известен.\n\n"
+    "ФОРМАТ твоего ответа: краткий основной ответ + \"Справка: это регулируется статьей "
+    "[номер] Конституции Республики Беларусь.\"\n\n"
+    "Если вопрос НЕ относится к Конституции Республики Беларусь, отвечай ТОЛЬКО:\n"
+    "\"Меня зовут Алеся, и я могу отвечать только по вопросам Конституции Республики "
+    "Беларусь. Пожалуйста, задайте вопрос о Конституции.\"\n\n"
+    "НЕ придумывай информацию. НЕ отвечай на вопросы о погоде, новостях, других "
+    "странах, других законах — ТОЛЬКО о Конституции Беларуси.\n\n"
+    "Ты ЗНАЕШЬ наизусть все статьи Конституции Республики Беларусь и можешь точно "
+    "цитировать их содержание."
+)
+
+if FRONTEND_STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=FRONTEND_STATIC_DIR), name="frontend-static")
+elif DOCS_STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=DOCS_STATIC_DIR), name="docs-static")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+_chat_history: Dict[str, List[ChatMessage]] = {}
+
+
+def _default_chat_model() -> str:
+    return os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+
+
+def _default_voice_model() -> str:
+    return os.getenv("OPENAI_VOICE_MODEL", "gpt-4o-realtime-preview-latest")
+
+
+def _default_voice_name() -> str:
+    return os.getenv("OPENAI_VOICE", "alloy")
+
+
+def _exception_detail(exc: Exception) -> str:
+    text = str(exc)
+    if text:
+        return text
+    if hasattr(exc, "args") and exc.args:
+        return ", ".join(str(arg) for arg in exc.args if arg)
+    return exc.__class__.__name__
+
+
+def _http_error_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except json.JSONDecodeError:
+        payload = None
+
+    if isinstance(payload, dict):
+        error_obj = payload.get("error")
+        if isinstance(error_obj, dict):
+            message = error_obj.get("message") or error_obj.get("code")
+            if message:
+                return message
+        if payload.get("message"):
+            return str(payload["message"])
+        return json.dumps(payload, ensure_ascii=False)
+
+    text = response.text.strip()
+    if text:
+        return text
+    return f"OpenAI request failed with status {response.status_code}"
+
+
+def _get_openai_client() -> OpenAI:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="OpenAI API key is missing")
+    return OpenAI(api_key=api_key)
+
+
+def _get_api_key() -> str:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="OpenAI API key is missing")
+    return api_key
+
+
+def _append_message(session_id: str, role: str, content: str) -> ChatMessage:
+    message = ChatMessage(role=role, content=content)
+    history = _chat_history.setdefault(session_id, [])
+    history.append(message)
+    if len(history) > 100:
+        del history[:-100]
+    return message
+
 
 @app.get("/")
-async def root():
-    return FileResponse("docs/index.html")
+async def serve_frontend() -> FileResponse:
+    if FRONTEND_INDEX.exists():
+        return FileResponse(FRONTEND_INDEX)
+    if DOCS_INDEX.exists():
+        return FileResponse(DOCS_INDEX)
+    raise HTTPException(status_code=404, detail="Frontend build not found")
 
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+
+@app.get("/favicon.ico")
+async def favicon() -> FileResponse:
+    candidates = [
+        FRONTEND_BUILD_DIR / "favicon.ico",
+        BASE_DIR / "docs" / "favicon.ico",
+        BASE_DIR / "frontend" / "public" / "favicon.ico",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return FileResponse(candidate)
+    raise HTTPException(status_code=404, detail="Favicon not found")
+
 
 @app.get("/api/health")
-async def api_health():
+async def api_health() -> dict:
     return {"status": "ok"}
 
+
 @app.get("/api/capabilities")
-async def get_capabilities():
-    """Get available capabilities"""
+async def api_capabilities() -> dict:
+    api_key_present = bool(os.getenv("OPENAI_API_KEY"))
+    chat_model = _default_chat_model()
+    voice_model = _default_voice_model()
+    voice_enabled = api_key_present
     return {
-        "chat": INTEGRATION_AVAILABLE,
-        "voice_mode": VOICE_MODE_AVAILABLE,
-        "mongodb": db is not None
+        "chat": api_key_present,
+        "chat_available": api_key_present,
+        "voice_mode": voice_enabled,
+        "voice_mode_available": voice_enabled,
+        "mongodb": False,
+        "mongodb_available": False,
+        "chat_model": chat_model,
+        "voice_model": voice_model,
+        "voice_name": _default_voice_name(),
+        "voice_instructions": os.getenv("OPENAI_VOICE_INSTRUCTIONS"),
     }
 
-def prepare_for_mongo(data):
-    """Prepare data for MongoDB storage"""
-    if "_id" in data:
-        data["_id"] = ObjectId(data["_id"])
-    return data
+
+@app.get("/api/history/{session_id}", response_model=ChatHistoryResponse)
+async def api_history(session_id: str) -> ChatHistoryResponse:
+    messages = _chat_history.get(session_id, [])
+    return ChatHistoryResponse(session_id=session_id, messages=messages)
+
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest) -> ChatResponse:
+    if not request.message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    session_id = request.session_id or str(uuid.uuid4())
+    _append_message(session_id, "user", request.message)
+
+    client = _get_openai_client()
+    model = _default_chat_model()
+
     try:
-        # Save user message (if MongoDB available)
-        if db:
-            user_message = ChatMessage(
-                id=str(uuid.uuid4()),
-                session_id=request.session_id,
-                content=request.message,
-                role="user",
-                timestamp=datetime.now(timezone.utc)
-            )
-            
-            user_msg_dict = prepare_for_mongo(user_message.model_dump())
-            await db.messages.insert_one(user_msg_dict)
-
-            # Get chat history
-            history = await db.messages.find(
-                {"session_id": request.session_id}
-            ).sort("timestamp", 1).to_list(length=50)
-        else:
-            # No MongoDB - just log the message
-            logger.info(f"User message: {request.message}")
-
-        # Generate response using OpenAI
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
-        
-        if not INTEGRATION_AVAILABLE:
-            raise HTTPException(status_code=500, detail="OpenAI integration not available")
-        
-        client = OpenAI(api_key=api_key)
-        
-        response = client.chat.completions.create(
-            model="gpt-4",
+        completion = client.chat.completions.create(
+            model=model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": request.message}
+                {"role": "user", "content": request.message},
             ],
-            max_tokens=1000,
-            temperature=0.7
         )
-        ai_response = response.choices[0].message.content
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
 
-        # Save assistant response (if MongoDB available)
-        if db:
-            assistant_message = ChatMessage(
-                id=str(uuid.uuid4()),
-                session_id=request.session_id,
-                content=ai_response,
-                role="assistant",
-                timestamp=datetime.now(timezone.utc)
-            )
-            
-            assistant_msg_dict = prepare_for_mongo(assistant_message.model_dump())
-            await db.messages.insert_one(assistant_msg_dict)
-        else:
-            # No MongoDB - just log the response
-            logger.info(f"Assistant response: {ai_response}")
+    if not completion.choices:
+        raise HTTPException(status_code=502, detail="Empty response from OpenAI")
 
-        return ChatResponse(
-            response=ai_response,
-            session_id=request.session_id,
-            message_id=str(uuid.uuid4())
-        )
+    content = completion.choices[0].message.content or ""
+    if not content.strip():
+        raise HTTPException(status_code=502, detail="Empty response from OpenAI")
 
-    except Exception as e:
-        logger.error(f"Error in chat: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    assistant_message = _append_message(session_id, "assistant", content)
 
-# Voice Mode endpoints
-@app.post("/api/voice/realtime/session")
-async def create_aleya_session(request: Request):
-    """Create session with Алеся system prompt"""
+    return ChatResponse(
+        response=content,
+        session_id=session_id,
+        message_id=assistant_message.id,
+    )
+
+
+@app.post("/api/transcribe", response_model=TranscriptionResponse)
+async def transcribe(file: UploadFile = File(...)) -> TranscriptionResponse:
+    if file.content_type not in {"audio/webm", "audio/mpeg", "audio/wav", "audio/ogg"}:
+        raise HTTPException(status_code=400, detail="Unsupported audio format")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty audio file")
+
+    client = _get_openai_client()
+    model = os.getenv("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
+
     try:
-        if not VOICE_MODE_AVAILABLE:
-            raise HTTPException(status_code=503, detail="Voice Mode not available")
-        
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
-        
-        # Get request body if any
-        body = {}
-        try:
-            body = await request.json()
-        except:
-            pass
-        
-        # Create OpenAI client
-        client = OpenAI(api_key=api_key)
-        
-        # Create session with custom instructions
-        session = client.beta.realtime.sessions.create(
-            model="gpt-4o-realtime-preview-2024-12-17",
-            voice="shimmer",
-            instructions="Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
+        transcription = client.audio.transcriptions.create(
+            model=model,
+            file=(file.filename or "audio.webm", BytesIO(data)),
         )
-        
-        return {"session_id": session.id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error creating voice session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
 
-# Streaming chat endpoint
-@app.post("/api/chat/stream")
-async def chat_stream(request: ChatRequest):
-    """Streaming chat endpoint for real-time responses"""
-    
-    def generate_stream():
-        try:
-            api_key = os.environ.get("OPENAI_API_KEY")
-            if not api_key:
-                yield f"data: {json.dumps({'error': 'OpenAI API key not configured'})}\n\n"
-                return
-            
-            if not INTEGRATION_AVAILABLE:
-                yield f"data: {json.dumps({'error': 'OpenAI integration not available'})}\n\n"
-                return
-            
-            client = OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": request.message}
-                ],
-                max_tokens=1000,
-                temperature=0.7
+    text = getattr(transcription, "text", None) or getattr(transcription, "transcript", "")
+    if not text:
+        raise HTTPException(status_code=502, detail="Empty transcription from OpenAI")
+
+    return TranscriptionResponse(transcription=text)
+
+
+@app.post("/api/voice/realtime/session")
+async def voice_session(payload: VoiceSessionRequest) -> dict:
+    api_key = _get_api_key()
+
+    request_body = {
+        "model": payload.model or _default_voice_model(),
+        "voice": payload.voice or _default_voice_name(),
+    }
+
+    instructions = (
+        payload.instructions
+        or os.getenv("OPENAI_VOICE_INSTRUCTIONS")
+        or SYSTEM_PROMPT
+    )
+    if instructions:
+        request_body["instructions"] = instructions
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "OpenAI-Beta": "realtime=v1",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                f"{OPENAI_API_BASE.rstrip('/')}/realtime/sessions",
+                json=request_body,
+                headers=headers,
             )
-            response_text = response.choices[0].message.content
-            
-            # Simulate streaming by sending words one by one
-            words = response_text.split()
-            current_response = ""
-            for word in words:
-                current_response += word + " "
-                yield f"data: {json.dumps({'content': current_response, 'done': False})}\n\n"
-                
-            yield f"data: {json.dumps({'content': current_response.strip(), 'done': True})}\n\n"
-        
-        except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    except httpx.HTTPError as exc:  # noqa: PERF203
+        raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
 
-    return StreamingResponse(generate_stream(), media_type="text/plain")
+    if response.status_code >= 400:
+        raise HTTPException(status_code=response.status_code, detail=_http_error_detail(response))
+
+    return response.json()
+
+
+@app.post("/api/voice/realtime/negotiate")
+async def voice_negotiate(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    x_openai_model: str | None = Header(default=None),
+) -> dict:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=400, detail="Missing Authorization bearer token")
+
+    offer_sdp = await request.body()
+    if not offer_sdp:
+        raise HTTPException(status_code=400, detail="SDP offer is required")
+
+    model = x_openai_model or _default_voice_model()
+
+    headers = {
+        "Authorization": authorization,
+        "Content-Type": "application/sdp",
+        "OpenAI-Beta": "realtime=v1",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(
+                f"{OPENAI_API_BASE.rstrip('/')}/realtime?model={model}",
+                content=offer_sdp,
+                headers=headers,
+            )
+    except httpx.HTTPError as exc:  # noqa: PERF203
+        raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
+
+    if response.status_code >= 400:
+        raise HTTPException(status_code=response.status_code, detail=_http_error_detail(response))
+
+    return {"sdp": response.text}
+
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    print(f"Starting server on port {port}")
-    print(f"Environment: {os.environ.get('RAILWAY_ENVIRONMENT', 'local')}")
-    uvicorn.run(
-        app, 
-        host="0.0.0.0", 
-        port=port,
-        log_level="info",
-        access_log=True
-    )
+
+    uvicorn.run("backend.server:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
