@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List
 # MongoDB imports - only ObjectId needed for PyObjectId
 from bson import ObjectId
 import os
@@ -47,6 +47,8 @@ try:
     logger.info("OpenAI integration available")
 except ImportError as e:
     class _OpenAIUnavailableError(Exception):
+        """Fallback exception to keep typing stable when OpenAI SDK отсутствует."""
+
         pass
 
     OpenAI = None  # type: ignore
@@ -127,41 +129,12 @@ SYSTEM_PROMPT = """Ты - Алеся, эксперт по Конституции
 OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-5")
 OPENAI_VOICE_MODEL = os.environ.get("OPENAI_VOICE_MODEL", "gpt-4o-realtime-preview-latest")
 
-# OpenAI integration
-try:
-    from openai import (
-        OpenAI,
-        APIError,
-        AuthenticationError,
-        PermissionDeniedError,
-        RateLimitError,
-        BadRequestError,
-        APIConnectionError,
-        InternalServerError,
-        NotFoundError,
-    )
-    OPENAI_EXCEPTIONS = (
-        APIError,
-        AuthenticationError,
-        PermissionDeniedError,
-        RateLimitError,
-        BadRequestError,
-        APIConnectionError,
-        InternalServerError,
-        NotFoundError,
-    )
-    INTEGRATION_AVAILABLE = True
-    VOICE_MODE_AVAILABLE = True
+if INTEGRATION_AVAILABLE:
     logger.info(
         "OpenAI integration available. Chat model=%s voice model=%s",
         OPENAI_CHAT_MODEL,
         OPENAI_VOICE_MODEL,
     )
-except ImportError as e:
-    OPENAI_EXCEPTIONS = tuple()
-    INTEGRATION_AVAILABLE = False
-    VOICE_MODE_AVAILABLE = False
-    logger.warning(f"OpenAI not available: {e}")
 
 @app.get("/")
 async def root():
@@ -178,6 +151,17 @@ async def api_health():
 def _has_openai_key() -> bool:
     api_key = os.environ.get("OPENAI_API_KEY")
     return bool(api_key and api_key.strip())
+
+
+def _get_openai_client() -> OpenAI:
+    if not INTEGRATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="OpenAI integration not available")
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key or not api_key.strip():
+        raise HTTPException(status_code=503, detail="OpenAI API key not configured")
+
+    return OpenAI(api_key=api_key)
 
 
 def _exception_detail(error: Exception) -> str:
@@ -216,6 +200,46 @@ def _openai_http_exception(error: Exception) -> HTTPException:
         status_code = 502
 
     return HTTPException(status_code=status_code, detail=detail)
+
+
+def _should_use_responses_api(model_name: str) -> bool:
+    normalized = model_name.lower()
+    return normalized.startswith("gpt-5") or normalized.startswith("o1")
+
+
+def _build_response_messages(user_message: str):
+    return [
+        {
+            "role": "system",
+            "content": [{"type": "text", "text": SYSTEM_PROMPT}],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": user_message}],
+        },
+    ]
+
+
+def _extract_text_from_response(response) -> str:
+    if hasattr(response, "output_text") and response.output_text:
+        return response.output_text
+
+    if hasattr(response, "choices") and response.choices:
+        choice = response.choices[0]
+        if getattr(choice, "message", None):
+            return choice.message.content
+        if getattr(choice, "text", None):
+            return choice.text
+
+    if hasattr(response, "output") and response.output:
+        for block in response.output:
+            contents = getattr(block, "content", [])
+            for item in contents:
+                text = getattr(item, "text", None)
+                if text:
+                    return text
+
+    raise ValueError("Unable to extract text from OpenAI response")
 
 
 @app.get("/api/capabilities")
@@ -266,25 +290,26 @@ async def chat(request: ChatRequest):
             logger.info(f"User message: {request.message}")
 
         # Generate response using OpenAI
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not _has_openai_key():
-            raise HTTPException(status_code=503, detail="OpenAI API key not configured")
+        client = _get_openai_client()
 
-        if not INTEGRATION_AVAILABLE:
-            raise HTTPException(status_code=503, detail="OpenAI integration not available")
-        
-        client = OpenAI(api_key=api_key)
+        if _should_use_responses_api(OPENAI_CHAT_MODEL):
+            response = client.responses.create(
+                model=OPENAI_CHAT_MODEL,
+                input=_build_response_messages(request.message),
+                max_output_tokens=1000,
+            )
+        else:
+            response = client.chat.completions.create(
+                model=OPENAI_CHAT_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": request.message}
+                ],
+                max_tokens=1000,
+                temperature=0.7
+            )
 
-        response = client.chat.completions.create(
-            model=OPENAI_CHAT_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": request.message}
-            ],
-            max_tokens=1000,
-            temperature=0.7
-        )
-        ai_response = response.choices[0].message.content
+        ai_response = _extract_text_from_response(response)
 
         # Save assistant response (if MongoDB available)
         if db:
@@ -365,26 +390,28 @@ async def create_aleya_session(request: Request):
         if not VOICE_MODE_AVAILABLE:
             raise HTTPException(status_code=503, detail="Voice Mode not available")
 
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not _has_openai_key():
-            raise HTTPException(status_code=503, detail="OpenAI API key not configured")
-        
         # Get request body if any
         body = {}
         try:
             body = await request.json()
         except:
             pass
-        
-        # Create OpenAI client
-        client = OpenAI(api_key=api_key)
+
+        client = _get_openai_client()
 
         # Create session with custom instructions
-        session = client.beta.realtime.sessions.create(
-            model=OPENAI_VOICE_MODEL,
-            voice="shimmer",
-            instructions="Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
-        )
+        if hasattr(client, "realtime"):
+            session = client.realtime.sessions.create(  # type: ignore[attr-defined]
+                model=OPENAI_VOICE_MODEL,
+                voice=body.get("voice", "shimmer"),
+                instructions="Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай.",
+            )
+        else:
+            session = client.beta.realtime.sessions.create(  # type: ignore[attr-defined]
+                model=OPENAI_VOICE_MODEL,
+                voice=body.get("voice", "shimmer"),
+                instructions="Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай.",
+            )
 
         return {"session_id": session.id}
     except HTTPException:
@@ -403,34 +430,38 @@ async def chat_stream(request: ChatRequest):
     
     def generate_stream():
         try:
-            api_key = os.environ.get("OPENAI_API_KEY")
-            if not _has_openai_key():
-                yield f"data: {json.dumps({'error': 'OpenAI API key not configured'})}\n\n"
+            try:
+                client = _get_openai_client()
+            except HTTPException as exc:
+                yield f"data: {json.dumps({'error': exc.detail})}\n\n"
                 return
 
-            if not INTEGRATION_AVAILABLE:
-                yield f"data: {json.dumps({'error': 'OpenAI integration not available'})}\n\n"
-                return
-            
-            client = OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
-                model=OPENAI_CHAT_MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": request.message}
-                ],
-                max_tokens=1000,
-                temperature=0.7
-            )
-            response_text = response.choices[0].message.content
-            
+            if _should_use_responses_api(OPENAI_CHAT_MODEL):
+                response = client.responses.create(
+                    model=OPENAI_CHAT_MODEL,
+                    input=_build_response_messages(request.message),
+                    max_output_tokens=1000,
+                )
+            else:
+                response = client.chat.completions.create(
+                    model=OPENAI_CHAT_MODEL,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": request.message}
+                    ],
+                    max_tokens=1000,
+                    temperature=0.7
+                )
+
+            response_text = _extract_text_from_response(response)
+
             # Simulate streaming by sending words one by one
             words = response_text.split()
             current_response = ""
             for word in words:
                 current_response += word + " "
                 yield f"data: {json.dumps({'content': current_response, 'done': False})}\n\n"
-                
+
             yield f"data: {json.dumps({'content': current_response.strip(), 'done': True})}\n\n"
         
         except OPENAI_EXCEPTIONS as exc:
