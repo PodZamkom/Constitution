@@ -1,19 +1,74 @@
 // Основная логика приложения для GitHub Pages
-const BACKEND_URL = 'https://web-production-9ed88.up.railway.app'; // Railway backend API
+function resolveBackendUrl() {
+    const candidates = [
+        typeof window !== 'undefined' ? window.BACKEND_URL : null,
+        typeof window !== 'undefined' ? window.REACT_APP_BACKEND_URL : null,
+        typeof window !== 'undefined' ? window.__BACKEND_URL__ : null,
+    ];
+
+    if (typeof window !== 'undefined' && window.process && window.process.env) {
+        candidates.push(window.process.env.REACT_APP_BACKEND_URL);
+    }
+
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) {
+            return candidate.replace(/\/+$/, '');
+        }
+    }
+
+    if (typeof window !== 'undefined' && window.location && window.location.origin) {
+        return window.location.origin.replace(/\/+$/, '');
+    }
+
+    return '';
+}
+
+const BACKEND_URL = resolveBackendUrl();
+const DEFAULT_VOICE_INSTRUCTIONS = "Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай.";
+const DEFAULT_VOICE_NAME = 'alloy';
+const DEFAULT_VOICE_MODEL = 'gpt-4o-realtime-preview-latest';
 let sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 let voiceMode = false;
 let voiceChat = null;
 let voiceModeStatus = 'disconnected';
 let capabilities = {};
 
+function getFallbackCapabilities() {
+    return {
+        chat: true,
+        chat_available: true,
+        voice_mode: true,
+        voice_mode_available: true,
+        voice_model: DEFAULT_VOICE_MODEL,
+    };
+}
+
+function ensureCapabilityDefaults() {
+    if (!capabilities || typeof capabilities !== 'object') {
+        capabilities = getFallbackCapabilities();
+        return;
+    }
+
+    if (!capabilities.voice_model) {
+        capabilities.voice_model = DEFAULT_VOICE_MODEL;
+    }
+
+    if (typeof capabilities.voice_mode === 'undefined') {
+        capabilities.voice_mode = true;
+    }
+}
+
 // Voice Mode WebRTC Class
 class RealtimeAudioChat {
-    constructor() {
+    constructor(options = {}) {
         this.peerConnection = null;
         this.dataChannel = null;
         this.audioElement = null;
         this.sessionToken = null;
-        this.sessionModel = "gpt-4o-realtime-preview-2024-12-17";
+        this.sessionModel = options.model || DEFAULT_VOICE_MODEL;
+        this.voiceName = options.voice || DEFAULT_VOICE_NAME;
+        this.instructions = options.instructions || DEFAULT_VOICE_INSTRUCTIONS;
+        this.backendUrl = options.backendUrl || BACKEND_URL;
         this.onStatusChange = null;
         this.onError = null;
     }
@@ -23,29 +78,36 @@ class RealtimeAudioChat {
             console.log('Initializing Voice Mode for Алеся...');
             
             // РЕАЛЬНЫЙ API вызов для создания сессии
-            const tokenResponse = await fetch(`${BACKEND_URL}/api/voice/realtime/session`, {
+            const payload = {
+                voice: this.voiceName,
+                model: this.sessionModel,
+            };
+            if (this.instructions) {
+                payload.instructions = this.instructions;
+            }
+
+            const tokenResponse = await fetch(`${this.backendUrl}/api/voice/realtime/session`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
                 },
-                body: JSON.stringify({
-                    voice: "shimmer", // Female voice for Алеся
-                    model: "gpt-4o-realtime-preview-2024-12-17",
-                    instructions: "Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
-                })
+                body: JSON.stringify(payload)
             });
-            
+
             if (!tokenResponse.ok) {
                 throw new Error(`Session request failed: ${tokenResponse.status}`);
             }
-            
+
             const data = await tokenResponse.json();
             if (!data.client_secret?.value) {
                 throw new Error("Failed to get session token");
             }
-            
+
             this.sessionToken = data.client_secret.value;
-            this.sessionModel = (data.model) || this.sessionModel;
+            this.sessionModel = data.model || this.sessionModel;
+            if (data.voice) {
+                this.voiceName = data.voice;
+            }
 
             console.log('Voice Mode session created successfully');
 
@@ -60,7 +122,7 @@ class RealtimeAudioChat {
             await this.peerConnection.setLocalDescription(offer);
 
             // Send offer to backend and get answer
-            const response = await fetch(`${BACKEND_URL}/api/voice/realtime/negotiate`, {
+            const response = await fetch(`${this.backendUrl}/api/voice/realtime/negotiate`, {
                 method: "POST",
                 body: offer.sdp,
                 headers: {
@@ -164,11 +226,16 @@ class RealtimeAudioChat {
 }
 
 function setMode(isVoiceMode) {
+    if (isVoiceMode && capabilities.voice_mode === false) {
+        alert('Голосовой режим сейчас недоступен.');
+        return;
+    }
+
     voiceMode = isVoiceMode;
     const buttons = document.querySelectorAll('.mode-btn');
     buttons.forEach(btn => btn.classList.remove('active'));
     event.target.classList.add('active');
-    
+
     // Обновить интерфейс в зависимости от режима
     updateInterface();
 }
@@ -202,6 +269,7 @@ function createVoiceControls() {
     const chatContainer = document.querySelector('.chat-container');
     const voiceControls = document.createElement('div');
     voiceControls.className = 'voice-mode-controls';
+    const disabled = capabilities.voice_mode === false;
     voiceControls.innerHTML = `
         <div class="voice-status">
             <p>Режим голосового общения в реальном времени</p>
@@ -210,7 +278,7 @@ function createVoiceControls() {
                 Статус: Отключен
             </div>
         </div>
-        <button class="voice-connect-btn" onclick="connectVoiceMode()">
+        <button class="voice-connect-btn" onclick="connectVoiceMode()" ${disabled ? 'disabled' : ''}>
             Подключиться к голосовому чату
         </button>
     `;
@@ -390,36 +458,48 @@ function playTTS(text) {
 }
 
 async function connectVoiceMode() {
+    if (voiceModeStatus === 'connecting') {
+        return;
+    }
+
+    if (capabilities.voice_mode === false) {
+        alert('Голосовой режим сейчас недоступен.');
+        setVoiceModeStatus('disconnected');
+        return;
+    }
+
     setVoiceModeStatus('connecting');
-    
-    try {
-        // Создаем сессию Voice Mode через наш API
-        const response = await fetch(`${BACKEND_URL}/api/voice/realtime/session`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                voice: "shimmer", // Female voice for Алеся
-                model: "gpt-4o-realtime-preview-2024-12-17",
-                instructions: "Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
-            })
-        });
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        console.log('Voice Mode session created:', data);
-        
-        setVoiceModeStatus('ready');
-        alert('Voice Mode подключен! Теперь вы можете говорить с Алесей.');
-        
-    } catch (error) {
-        console.error('Voice mode connection failed:', error);
+
+    const options = {
+        backendUrl: BACKEND_URL,
+        model: capabilities.voice_model || undefined,
+        voice: capabilities.voice_name || DEFAULT_VOICE_NAME,
+        instructions: capabilities.voice_instructions || DEFAULT_VOICE_INSTRUCTIONS,
+    };
+
+    if (voiceChat && typeof voiceChat.disconnect === 'function') {
+        voiceChat.disconnect();
+    }
+
+    voiceChat = new RealtimeAudioChat(options);
+    voiceChat.onStatusChange = (status) => setVoiceModeStatus(status);
+    voiceChat.onError = (message) => {
+        console.error('Voice mode error:', message);
         alert('Не удалось подключиться к Voice Mode. Попробуйте еще раз.');
         setVoiceModeStatus('disconnected');
+        voiceChat = null;
+    };
+
+    try {
+        await voiceChat.init();
+    } catch (error) {
+        console.error('Voice mode connection failed:', error);
+        if (voiceChat && voiceChat.disconnect) {
+            voiceChat.disconnect();
+        }
+        voiceChat = null;
+        setVoiceModeStatus('disconnected');
+        alert('Не удалось подключиться к Voice Mode. Проверьте API ключ и попробуйте снова.');
     }
 }
 
@@ -481,22 +561,16 @@ async function loadCapabilities() {
             console.log('API capabilities:', capabilities);
         } else {
             // Fallback если API недоступен
-            capabilities = {
-                whisper_available: false,
-                voice_mode_available: true,
-                llm_available: true
-            };
+            capabilities = getFallbackCapabilities();
             console.log('Using fallback capabilities:', capabilities);
         }
     } catch (error) {
         console.error('Failed to load capabilities:', error);
         // Fallback при ошибке
-        capabilities = {
-            whisper_available: false,
-            voice_mode_available: true,
-            llm_available: true
-        };
+        capabilities = getFallbackCapabilities();
     }
+
+    ensureCapabilityDefaults();
 }
 
 // Обработка Enter для отправки сообщения
