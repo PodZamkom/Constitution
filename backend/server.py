@@ -89,21 +89,14 @@ SYSTEM_PROMPT = """Ты - Алеся, эксперт по Конституции
 
 # OpenAI integration
 try:
-    import openai
-    INTEGRATION_AVAILABLE = True
-    logger.info("OpenAI integration available")
-except ImportError:
-    INTEGRATION_AVAILABLE = False
-    logger.warning("OpenAI not available")
-
-# Voice Mode integration
-try:
     from openai import OpenAI
+    INTEGRATION_AVAILABLE = True
     VOICE_MODE_AVAILABLE = True
-    logger.info("OpenAI Voice Mode available")
+    logger.info("OpenAI integration available")
 except ImportError as e:
-    logger.warning(f"OpenAI Voice Mode not available: {e}")
+    INTEGRATION_AVAILABLE = False
     VOICE_MODE_AVAILABLE = False
+    logger.warning(f"OpenAI not available: {e}")
 
 @app.get("/")
 async def root():
@@ -164,7 +157,7 @@ async def chat(request: ChatRequest):
         if not INTEGRATION_AVAILABLE:
             raise HTTPException(status_code=500, detail="OpenAI integration not available")
         
-        client = openai.OpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key)
         
         response = client.chat.completions.create(
             model="gpt-4",
@@ -272,7 +265,7 @@ async def chat_stream(request: ChatRequest):
                 yield f"data: {json.dumps({'error': 'OpenAI integration not available'})}\n\n"
                 return
             
-            client = openai.OpenAI(api_key=api_key)
+            client = OpenAI(api_key=api_key)
             response = client.chat.completions.create(
                 model="gpt-4",
                 messages=[
