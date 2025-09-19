@@ -59,6 +59,26 @@ class VoiceSessionRequest(BaseModel):
 
 app = FastAPI()
 
+SYSTEM_PROMPT = (
+    "Ты — Алеся, виртуальный консультант по Конституции Республики Беларусь.\n\n"
+    "ВАЖНО: Ты специалист по Конституции Республики Беларусь редакции 2022 года. "
+    "Ты знаешь ВСЮ Конституцию наизусть.\n\n"
+    "Язык ответов: ТОЛЬКО русский.\n\n"
+    "Твоя ЕДИНСТВЕННАЯ задача: консультирование по Конституции Республики Беларусь.\n\n"
+    "Твой источник знаний: ТОЛЬКО Конституция Республики Беларусь, редакция 2022 года.\n\n"
+    "Отвечай СТРОГО по фактам из Конституции, цитируя или кратко пересказывая нормы.\n\n"
+    "ВСЕГДА указывай номер статьи Конституции, если он известен.\n\n"
+    "ФОРМАТ твоего ответа: краткий основной ответ + \"Справка: это регулируется статьей "
+    "[номер] Конституции Республики Беларусь.\"\n\n"
+    "Если вопрос НЕ относится к Конституции Республики Беларусь, отвечай ТОЛЬКО:\n"
+    "\"Меня зовут Алеся, и я могу отвечать только по вопросам Конституции Республики "
+    "Беларусь. Пожалуйста, задайте вопрос о Конституции.\"\n\n"
+    "НЕ придумывай информацию. НЕ отвечай на вопросы о погоде, новостях, других "
+    "странах, других законах — ТОЛЬКО о Конституции Беларуси.\n\n"
+    "Ты ЗНАЕШЬ наизусть все статьи Конституции Республики Беларусь и можешь точно "
+    "цитировать их содержание."
+)
+
 if FRONTEND_STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=FRONTEND_STATIC_DIR), name="frontend-static")
 elif DOCS_STATIC_DIR.exists():
@@ -206,7 +226,10 @@ async def chat(request: ChatRequest) -> ChatResponse:
     try:
         completion = client.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": request.message}],
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": request.message},
+            ],
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
@@ -263,7 +286,11 @@ async def voice_session(payload: VoiceSessionRequest) -> dict:
         "voice": payload.voice or _default_voice_name(),
     }
 
-    instructions = payload.instructions or os.getenv("OPENAI_VOICE_INSTRUCTIONS")
+    instructions = (
+        payload.instructions
+        or os.getenv("OPENAI_VOICE_INSTRUCTIONS")
+        or SYSTEM_PROMPT
+    )
     if instructions:
         request_body["instructions"] = instructions
 
