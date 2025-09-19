@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
 const BACKEND_URL = 'http://localhost:8000';
+const VERSION = '2.0.0'; // Force cache refresh
 
 // Voice Mode WebSocket Class
 class RealtimeAudioChat {
@@ -27,7 +28,7 @@ class RealtimeAudioChat {
 
   async init() {
     try {
-      console.log('Initializing Voice Mode for Алеся...');
+      console.log('Initializing Voice Mode for Алеся... (v2.0.0 - WebSocket)');
       
       // Get session from backend
       const tokenResponse = await fetch(`${this.backendUrl}/api/voice/realtime/session`, {
