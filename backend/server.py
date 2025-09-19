@@ -173,7 +173,7 @@ async def chat(request: ChatRequest):
         client = OpenAI(api_key=api_key)
         
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": request.message}
@@ -275,7 +275,7 @@ async def create_aleya_session(request: Request):
         
         # Create session with custom instructions
         session = client.beta.realtime.sessions.create(
-            model="gpt-4o-realtime-preview-2024-12-17",
+            model="gpt-4o-realtime-preview",
             voice="shimmer",
             instructions="Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
         )
@@ -305,7 +305,7 @@ async def chat_stream(request: ChatRequest):
             
             client = OpenAI(api_key=api_key)
             response = client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": request.message}
