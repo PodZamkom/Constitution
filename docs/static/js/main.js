@@ -393,11 +393,28 @@ async function connectVoiceMode() {
     setVoiceModeStatus('connecting');
     
     try {
-        // Имитируем подключение к Voice Mode
-        setTimeout(() => {
-            setVoiceModeStatus('ready');
-            alert('Voice Mode подключен! Теперь вы можете говорить с Алесей. (Демо-режим: голосовые сообщения будут обрабатываться как текстовые)');
-        }, 2000);
+        // Создаем сессию Voice Mode через наш API
+        const response = await fetch(`${BACKEND_URL}/api/voice/realtime/session`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                voice: "shimmer", // Female voice for Алеся
+                model: "gpt-4o-realtime-preview-2024-12-17",
+                instructions: "Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('Voice Mode session created:', data);
+        
+        setVoiceModeStatus('ready');
+        alert('Voice Mode подключен! Теперь вы можете говорить с Алесей.');
         
     } catch (error) {
         console.error('Voice mode connection failed:', error);
