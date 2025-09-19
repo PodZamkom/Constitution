@@ -217,15 +217,19 @@ async def create_aleya_session(request: Request):
         
         # Create OpenAI client
         client = OpenAI(api_key=api_key)
-        
-        # Create session with custom instructions
-        session = client.beta.realtime.sessions.create(
-            model="gpt-4o-realtime-preview-2024-12-17",
-            voice="shimmer",
-            instructions="Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
+
+        # Create realtime session and return full payload for frontend
+        session = client.realtime.sessions.create(
+            model="gpt-4o-realtime-preview-latest",
+            voice="verse",
         )
-        
-        return {"session_id": session.id}
+
+        # openai responses implement model_dump for serialization
+        if hasattr(session, "model_dump"):
+            return session.model_dump()
+
+        # Fallback: try to convert to dict or return minimal payload
+        return json.loads(session.json()) if hasattr(session, "json") else {"id": getattr(session, "id", None)}
     except HTTPException:
         raise
     except Exception as e:
