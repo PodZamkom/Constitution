@@ -281,9 +281,9 @@ async def transcribe(file: UploadFile = File(...)) -> TranscriptionResponse:
 
 @app.post("/api/voice/realtime/session")
 async def voice_session(payload: VoiceSessionRequest) -> dict:
-    api_key = _get_api_key()
+    client = _get_openai_client()
 
-    request_body = {
+    request_args = {
         "model": payload.model or _default_voice_model(),
         "voice": payload.voice or _default_voice_name(),
     }
@@ -294,28 +294,20 @@ async def voice_session(payload: VoiceSessionRequest) -> dict:
         or SYSTEM_PROMPT
     )
     if instructions:
-        request_body["instructions"] = instructions
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "OpenAI-Beta": "realtime=v1",
-    }
+        request_args["instructions"] = instructions
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(
-                f"{OPENAI_API_BASE.rstrip('/')}/realtime/sessions",
-                json=request_body,
-                headers=headers,
-            )
-    except httpx.HTTPError as exc:  # noqa: PERF203
+        session = client.realtime.sessions.create(**request_args)
+    except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
 
-    if response.status_code >= 400:
-        raise HTTPException(status_code=response.status_code, detail=_http_error_detail(response))
+    if hasattr(session, "model_dump"):
+        return session.model_dump()
 
-    return response.json()
+    if isinstance(session, dict):
+        return session
+
+    return json.loads(json.dumps(session, default=lambda o: getattr(o, "__dict__", str(o))))
 
 
 @app.post("/api/voice/realtime/negotiate")
