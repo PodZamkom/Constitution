@@ -203,6 +203,8 @@ async def api_capabilities() -> dict:
         "mongodb_available": False,
         "chat_model": chat_model,
         "voice_model": voice_model,
+        "voice_name": _default_voice_name(),
+        "voice_instructions": os.getenv("OPENAI_VOICE_INSTRUCTIONS"),
     }
 
 

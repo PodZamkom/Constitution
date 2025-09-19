@@ -5,14 +5,23 @@ const BACKEND_URL = 'https://web-production-9ed88.up.railway.app';
 
 // Voice Mode WebRTC Class
 class RealtimeAudioChat {
-  constructor() {
+  constructor({
+    backendUrl,
+    voice,
+    model,
+    instructions,
+  }) {
     this.peerConnection = null;
     this.dataChannel = null;
     this.audioElement = null;
     this.sessionToken = null;
-    this.sessionModel = "gpt-4o-realtime-preview-2024-12-17";
+    this.sessionModel = model || "gpt-4o-realtime-preview-latest";
+    this.backendUrl = backendUrl;
+    this.voiceName = voice || "alloy";
+    this.instructions = instructions || null;
     this.onStatusChange = null;
     this.onError = null;
+    this.localStream = null;
   }
 
   async init() {
@@ -20,17 +29,18 @@ class RealtimeAudioChat {
       console.log('Initializing Voice Mode for Алеся...');
       
       // Get session from backend (simplified)
-      const tokenResponse = await fetch(`${BACKEND_URL}/api/voice/realtime/session`, {
+      const tokenResponse = await fetch(`${this.backendUrl}/api/voice/realtime/session`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          voice: "shimmer", // Female voice for Алеся
-          model: "gpt-4o-realtime-preview-2024-12-17"
+          voice: this.voiceName,
+          model: this.sessionModel,
+          instructions: this.instructions || undefined,
         })
       });
-      
+
       if (!tokenResponse.ok) {
         throw new Error(`Session request failed: ${tokenResponse.status}`);
       }
@@ -46,7 +56,22 @@ class RealtimeAudioChat {
       console.log('Voice Mode session created successfully');
 
       // Create and set up WebRTC peer connection
-      this.peerConnection = new RTCPeerConnection();
+      this.peerConnection = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+        ],
+      });
+      this.peerConnection.onconnectionstatechange = () => {
+        if (!this.onStatusChange) {
+          return;
+        }
+        if (this.peerConnection.connectionState === 'connected') {
+          this.onStatusChange('connected');
+        } else if (this.peerConnection.connectionState === 'failed') {
+          this.onStatusChange('disconnected');
+        }
+      };
       this.setupAudioElement();
       await this.setupLocalAudio();
       this.setupDataChannel();
@@ -55,8 +80,10 @@ class RealtimeAudioChat {
       const offer = await this.peerConnection.createOffer();
       await this.peerConnection.setLocalDescription(offer);
 
+      await this.waitForIceGatheringComplete();
+
       // Send offer to backend and get answer
-      const response = await fetch(`${BACKEND_URL}/api/voice/realtime/negotiate`, {
+      const response = await fetch(`${this.backendUrl}/api/voice/realtime/negotiate`, {
         method: "POST",
         body: offer.sdp,
         headers: {
@@ -83,7 +110,7 @@ class RealtimeAudioChat {
       if (this.onStatusChange) {
         this.onStatusChange('connected');
       }
-      
+
     } catch (error) {
       console.error("Failed to initialize Алеся audio chat:", error);
       if (this.onError) {
@@ -97,6 +124,7 @@ class RealtimeAudioChat {
     if (!this.audioElement) {
       this.audioElement = document.createElement("audio");
       this.audioElement.autoplay = true;
+      this.audioElement.playsInline = true;
       document.body.appendChild(this.audioElement);
     }
 
@@ -106,16 +134,16 @@ class RealtimeAudioChat {
   }
 
   async setupLocalAudio() {
-    const stream = await navigator.mediaDevices.getUserMedia({ 
+    this.localStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true
       }
     });
-    
-    stream.getTracks().forEach(track => {
-      this.peerConnection.addTrack(track, stream);
+
+    this.localStream.getTracks().forEach(track => {
+      this.peerConnection.addTrack(track, this.localStream);
     });
   }
 
@@ -131,8 +159,21 @@ class RealtimeAudioChat {
       if (this.onStatusChange) {
         this.onStatusChange('ready');
       }
+
+      if (this.instructions) {
+        try {
+          this.dataChannel.send(JSON.stringify({
+            type: 'session.update',
+            session: {
+              instructions: this.instructions,
+            },
+          }));
+        } catch (error) {
+          console.warn('Failed to send session instructions', error);
+        }
+      }
     };
-    
+
     this.dataChannel.onclose = () => {
       console.log("Data channel closed");
       if (this.onStatusChange) {
@@ -140,16 +181,54 @@ class RealtimeAudioChat {
       }
     };
   }
-  
+
+  async waitForIceGatheringComplete() {
+    if (this.peerConnection.iceGatheringState === 'complete') {
+      return;
+    }
+
+    await new Promise((resolve) => {
+      const checkState = () => {
+        if (this.peerConnection && this.peerConnection.iceGatheringState === 'complete') {
+          this.peerConnection.removeEventListener('icegatheringstatechange', checkState);
+          resolve();
+        }
+      };
+
+      this.peerConnection.addEventListener('icegatheringstatechange', checkState);
+      setTimeout(() => {
+        if (this.peerConnection) {
+          this.peerConnection.removeEventListener('icegatheringstatechange', checkState);
+        }
+        resolve();
+      }, 2000);
+    });
+  }
+
   disconnect() {
     if (this.dataChannel) {
       this.dataChannel.close();
     }
-    
+
     if (this.peerConnection) {
+      this.peerConnection.getSenders().forEach((sender) => {
+        if (sender.track) {
+          sender.track.stop();
+        }
+      });
+      this.peerConnection.getReceivers().forEach((receiver) => {
+        if (receiver.track) {
+          receiver.track.stop();
+        }
+      });
       this.peerConnection.close();
     }
-    
+
+    if (this.localStream) {
+      this.localStream.getTracks().forEach((track) => track.stop());
+      this.localStream = null;
+    }
+
     if (this.audioElement) {
       document.body.removeChild(this.audioElement);
       this.audioElement = null;
@@ -380,12 +459,17 @@ function App() {
       alert('Voice Mode недоступен. Проверьте настройки сервера.');
       return;
     }
-    
+
     setVoiceModeStatus('connecting');
-    
+
     try {
-      const newVoiceChat = new RealtimeAudioChat();
-      
+      const newVoiceChat = new RealtimeAudioChat({
+        backendUrl: BACKEND_URL,
+        voice: capabilities.voice_name,
+        model: capabilities.voice_model,
+        instructions: capabilities.voice_instructions,
+      });
+
       newVoiceChat.onStatusChange = (status) => {
         setVoiceModeStatus(status);
       };
