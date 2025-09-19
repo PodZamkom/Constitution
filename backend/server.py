@@ -192,9 +192,51 @@ async def chat(request: ChatRequest):
             message_id=str(uuid.uuid4())
         )
 
+    except HTTPException as exc:
+        logger.error(f"Error in chat: {exc.detail}")
+        raise exc
     except Exception as e:
         logger.error(f"Error in chat: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: List[ChatMessage] = []
+
+
+def serialize_chat_message(raw_message) -> ChatMessage:
+    if isinstance(raw_message, ChatMessage):
+        return raw_message
+
+    data = dict(raw_message)
+    if "id" not in data and "_id" in data:
+        data["id"] = str(data["_id"])
+
+    if isinstance(data.get("timestamp"), str):
+        timestamp_str = data["timestamp"]
+        if timestamp_str.endswith("Z"):
+            timestamp_str = timestamp_str[:-1] + "+00:00"
+        data["timestamp"] = datetime.fromisoformat(timestamp_str)
+
+    return ChatMessage(**data)
+
+
+@app.get("/api/history/{session_id}", response_model=ChatHistoryResponse)
+async def get_chat_history(session_id: str):
+    try:
+        if not db:
+            return ChatHistoryResponse(messages=[])
+
+        history = await db.messages.find({"session_id": session_id}).sort("timestamp", 1).to_list(length=100)
+        messages = [serialize_chat_message(message) for message in history]
+        return ChatHistoryResponse(messages=messages)
+
+    except HTTPException as exc:
+        logger.error(f"Error retrieving history: {exc.detail}")
+        raise exc
+    except Exception as e:
+        logger.error(f"Error retrieving history: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load chat history")
 
 # Voice Mode endpoints
 @app.post("/api/voice/realtime/session")
