@@ -34,11 +34,10 @@ app.mount("/static", StaticFiles(directory="docs/static"), name="static")
 client = None
 db = None
 
-# CORS
-origins = os.environ.get("CORS_ORIGINS", "*").split(",")
+# CORS - разрешаем все origins для Railway
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],  # Разрешаем все origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

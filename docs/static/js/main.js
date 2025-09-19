@@ -1,5 +1,5 @@
 // Основная логика приложения для GitHub Pages
-const BACKEND_URL = 'https://your-railway-app.railway.app'; // Railway backend API
+const BACKEND_URL = 'https://web-production-9ed88.up.railway.app'; // Railway backend API
 let sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 let voiceMode = false;
 let voiceChat = null;
