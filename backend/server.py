@@ -115,6 +115,17 @@ def _has_openai_key() -> bool:
     return bool(api_key and api_key.strip())
 
 
+def _exception_detail(error: Exception) -> str:
+    detail = str(error) if str(error) else ""
+    if not detail and getattr(error, "message", None):
+        detail = str(error.message)
+    if not detail and getattr(error, "args", None):
+        detail = " ".join(str(arg) for arg in error.args if arg)
+    if not detail:
+        detail = "Internal server error"
+    return detail
+
+
 @app.get("/api/capabilities")
 async def get_capabilities():
     """Get available capabilities"""
@@ -173,7 +184,7 @@ async def chat(request: ChatRequest):
         client = OpenAI(api_key=api_key)
         
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": request.message}
@@ -209,8 +220,8 @@ async def chat(request: ChatRequest):
         logger.error(f"Error in chat: {exc.detail}")
         raise exc
     except Exception as e:
-        logger.error(f"Error in chat: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Error in chat")
+        raise HTTPException(status_code=500, detail=_exception_detail(e))
 
 
 class ChatHistoryResponse(BaseModel):
@@ -248,7 +259,7 @@ async def get_chat_history(session_id: str):
         logger.error(f"Error retrieving history: {exc.detail}")
         raise exc
     except Exception as e:
-        logger.error(f"Error retrieving history: {e}")
+        logger.exception("Error retrieving history")
         raise HTTPException(status_code=500, detail="Failed to load chat history")
 
 # Voice Mode endpoints
@@ -275,7 +286,7 @@ async def create_aleya_session(request: Request):
         
         # Create session with custom instructions
         session = client.beta.realtime.sessions.create(
-            model="gpt-4o-realtime-preview",
+            model="gpt-4o-realtime-preview-latest",
             voice="shimmer",
             instructions="Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
         )
@@ -284,8 +295,8 @@ async def create_aleya_session(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error creating voice session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Error creating voice session")
+        raise HTTPException(status_code=500, detail=_exception_detail(e))
 
 # Streaming chat endpoint
 @app.post("/api/chat/stream")
@@ -305,7 +316,7 @@ async def chat_stream(request: ChatRequest):
             
             client = OpenAI(api_key=api_key)
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-5",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": request.message}
@@ -325,7 +336,8 @@ async def chat_stream(request: ChatRequest):
             yield f"data: {json.dumps({'content': current_response.strip(), 'done': True})}\n\n"
         
         except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            logger.exception("Error in chat stream")
+            yield f"data: {json.dumps({'error': _exception_detail(e)})}\n\n"
 
     return StreamingResponse(generate_stream(), media_type="text/plain")
 
