@@ -212,20 +212,72 @@ async def create_aleya_session(request: Request):
         body = {}
         try:
             body = await request.json()
-        except:
+        except Exception:
             pass
-        
+
+        requested_model = body.get("model", "gpt-4o-realtime-preview-2024-12-17")
+        requested_voice = body.get("voice", "shimmer")
+        requested_instructions = body.get(
+            "instructions",
+            "Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
+        )
+
         # Create OpenAI client
         client = OpenAI(api_key=api_key)
-        
+
         # Create session with custom instructions
         session = client.beta.realtime.sessions.create(
-            model="gpt-4o-realtime-preview-2024-12-17",
-            voice="shimmer",
-            instructions="Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
+            model=requested_model,
+            voice=requested_voice,
+            instructions=requested_instructions
         )
-        
-        return {"session_id": session.id}
+
+        def _as_dict(obj):
+            if isinstance(obj, dict):
+                return obj
+            for attr in ("model_dump", "dict", "to_dict"):
+                if hasattr(obj, attr):
+                    value = getattr(obj, attr)()
+                    if isinstance(value, dict):
+                        return value
+            for attr in ("model_dump_json", "json"):
+                if hasattr(obj, attr):
+                    try:
+                        return json.loads(getattr(obj, attr)())
+                    except Exception:
+                        continue
+            return None
+
+        session_data = _as_dict(session) or {}
+
+        client_secret_obj = session_data.get("client_secret")
+        if client_secret_obj is None and hasattr(session, "client_secret"):
+            client_secret_obj = _as_dict(session.client_secret)
+            if client_secret_obj is None:
+                value = getattr(session.client_secret, "value", None)
+                if value:
+                    client_secret_obj = {"value": value}
+
+        if not isinstance(client_secret_obj, dict):
+            client_secret_obj = {}
+
+        client_secret_value = client_secret_obj.get("value")
+        if not client_secret_value:
+            logger.error("Voice session created without client_secret value")
+            raise HTTPException(status_code=500, detail="Failed to create voice session token")
+
+        response_payload = {
+            "id": session_data.get("id") or getattr(session, "id", None),
+            "model": session_data.get("model") or getattr(session, "model", requested_model),
+            "client_secret": {
+                key: value for key, value in client_secret_obj.items() if value is not None
+            }
+        }
+
+        if not response_payload["id"]:
+            logger.warning("Voice session response missing session id")
+
+        return response_payload
     except HTTPException:
         raise
     except Exception as e:
