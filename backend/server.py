@@ -20,6 +20,43 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+try:
+    from openai import (
+        OpenAI,
+        APIError,
+        AuthenticationError,
+        PermissionDeniedError,
+        RateLimitError,
+        BadRequestError,
+        APIConnectionError,
+        InternalServerError,
+        NotFoundError,
+    )
+    OPENAI_EXCEPTIONS = (
+        APIError,
+        AuthenticationError,
+        PermissionDeniedError,
+        RateLimitError,
+        BadRequestError,
+        APIConnectionError,
+        InternalServerError,
+        NotFoundError,
+    )
+    INTEGRATION_AVAILABLE = True
+    VOICE_MODE_AVAILABLE = True
+    logger.info("OpenAI integration available")
+except ImportError as e:
+    class _OpenAIUnavailableError(Exception):
+        pass
+
+    OpenAI = None  # type: ignore
+    APIError = AuthenticationError = PermissionDeniedError = RateLimitError = _OpenAIUnavailableError
+    BadRequestError = APIConnectionError = InternalServerError = NotFoundError = _OpenAIUnavailableError
+    OPENAI_EXCEPTIONS = tuple()
+    INTEGRATION_AVAILABLE = False
+    VOICE_MODE_AVAILABLE = False
+    logger.warning(f"OpenAI not available: {e}")
+
 app = FastAPI()
 
 # Mount static files
@@ -77,7 +114,7 @@ class ChatResponse(BaseModel):
     message_id: str
 
 # System prompt for Belarus Constitution AI
-SYSTEM_PROMPT = """Ты - Алеся, эксперт по Конституции Республики Беларусь редакции 2022 года. 
+SYSTEM_PROMPT = """Ты - Алеся, эксперт по Конституции Республики Беларусь редакции 2022 года.
 
 Твоя задача:
 1. Отвечать только на вопросы, связанные с Конституцией Республики Беларусь
@@ -87,13 +124,41 @@ SYSTEM_PROMPT = """Ты - Алеся, эксперт по Конституции
 
 Отвечай на русском языке, будь дружелюбной и профессиональной."""
 
+OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-5")
+OPENAI_VOICE_MODEL = os.environ.get("OPENAI_VOICE_MODEL", "gpt-4o-realtime-preview-latest")
+
 # OpenAI integration
 try:
-    from openai import OpenAI
+    from openai import (
+        OpenAI,
+        APIError,
+        AuthenticationError,
+        PermissionDeniedError,
+        RateLimitError,
+        BadRequestError,
+        APIConnectionError,
+        InternalServerError,
+        NotFoundError,
+    )
+    OPENAI_EXCEPTIONS = (
+        APIError,
+        AuthenticationError,
+        PermissionDeniedError,
+        RateLimitError,
+        BadRequestError,
+        APIConnectionError,
+        InternalServerError,
+        NotFoundError,
+    )
     INTEGRATION_AVAILABLE = True
     VOICE_MODE_AVAILABLE = True
-    logger.info("OpenAI integration available")
+    logger.info(
+        "OpenAI integration available. Chat model=%s voice model=%s",
+        OPENAI_CHAT_MODEL,
+        OPENAI_VOICE_MODEL,
+    )
 except ImportError as e:
+    OPENAI_EXCEPTIONS = tuple()
     INTEGRATION_AVAILABLE = False
     VOICE_MODE_AVAILABLE = False
     logger.warning(f"OpenAI not available: {e}")
@@ -124,6 +189,33 @@ def _exception_detail(error: Exception) -> str:
     if not detail:
         detail = "Internal server error"
     return detail
+
+
+def _openai_http_exception(error: Exception) -> HTTPException:
+    detail = _exception_detail(error)
+
+    status_code = 502
+    if 'model' in detail.lower() and isinstance(error, NotFoundError):
+        detail = (
+            f"{detail}. Проверь доступ к модели {OPENAI_CHAT_MODEL} или задайте OPENAI_CHAT_MODEL"
+        )
+
+    if isinstance(error, AuthenticationError):
+        status_code = 401
+    elif isinstance(error, PermissionDeniedError):
+        status_code = 403
+    elif isinstance(error, NotFoundError):
+        status_code = 404
+    elif isinstance(error, RateLimitError):
+        status_code = 429
+    elif isinstance(error, BadRequestError):
+        status_code = 400
+    elif isinstance(error, APIConnectionError):
+        status_code = 503
+    elif isinstance(error, InternalServerError):
+        status_code = 502
+
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 @app.get("/api/capabilities")
@@ -182,9 +274,9 @@ async def chat(request: ChatRequest):
             raise HTTPException(status_code=503, detail="OpenAI integration not available")
         
         client = OpenAI(api_key=api_key)
-        
+
         response = client.chat.completions.create(
-            model="gpt-5",
+            model=OPENAI_CHAT_MODEL,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": request.message}
@@ -219,6 +311,9 @@ async def chat(request: ChatRequest):
     except HTTPException as exc:
         logger.error(f"Error in chat: {exc.detail}")
         raise exc
+    except OPENAI_EXCEPTIONS as exc:
+        logger.exception("OpenAI error in chat")
+        raise _openai_http_exception(exc)
     except Exception as e:
         logger.exception("Error in chat")
         raise HTTPException(status_code=500, detail=_exception_detail(e))
@@ -283,17 +378,20 @@ async def create_aleya_session(request: Request):
         
         # Create OpenAI client
         client = OpenAI(api_key=api_key)
-        
+
         # Create session with custom instructions
         session = client.beta.realtime.sessions.create(
-            model="gpt-4o-realtime-preview-latest",
+            model=OPENAI_VOICE_MODEL,
             voice="shimmer",
             instructions="Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
         )
-        
+
         return {"session_id": session.id}
     except HTTPException:
         raise
+    except OPENAI_EXCEPTIONS as exc:
+        logger.exception("OpenAI error creating voice session")
+        raise _openai_http_exception(exc)
     except Exception as e:
         logger.exception("Error creating voice session")
         raise HTTPException(status_code=500, detail=_exception_detail(e))
@@ -316,7 +414,7 @@ async def chat_stream(request: ChatRequest):
             
             client = OpenAI(api_key=api_key)
             response = client.chat.completions.create(
-                model="gpt-5",
+                model=OPENAI_CHAT_MODEL,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": request.message}
@@ -335,6 +433,10 @@ async def chat_stream(request: ChatRequest):
                 
             yield f"data: {json.dumps({'content': current_response.strip(), 'done': True})}\n\n"
         
+        except OPENAI_EXCEPTIONS as exc:
+            logger.exception("OpenAI error in chat stream")
+            error_detail = _openai_http_exception(exc).detail
+            yield f"data: {json.dumps({'error': error_detail})}\n\n"
         except Exception as e:
             logger.exception("Error in chat stream")
             yield f"data: {json.dumps({'error': _exception_detail(e)})}\n\n"
