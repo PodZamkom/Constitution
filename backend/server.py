@@ -153,29 +153,26 @@ async def chat(request: ChatRequest):
             # No MongoDB - just log the message
             logger.info(f"User message: {request.message}")
 
-        # Generate response using OpenAI with proxy
+        # Generate response using OpenAI
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+        
         if not INTEGRATION_AVAILABLE:
-            # Fallback response if integration not available
-            ai_response = f"Привет! Меня зовут Алеся. Я специалист по Конституции Республики Беларусь редакции 2022 года. Вы спросили: '{request.message}'. К сожалению, интеграция с LLM временно недоступна, но я готова помочь вам с вопросами по Конституции Беларуси, как только сервис будет восстановлен."
-        else:
-            # Initialize OpenAI client with proxy
-            # ТОЛЬКО ChatGPT API - используем переменную окружения
-            api_key = os.environ.get("OPENAI_API_KEY")
-            if not api_key:
-                ai_response = f"Привет! Меня зовут Алеся. Я специалист по Конституции Республики Беларусь редакции 2022 года. Вы спросили: '{request.message}'. К сожалению, API ключ OpenAI не настроен, но я готова помочь вам с вопросами по Конституции Беларуси, как только сервис будет настроен."
-            else:
-                client = openai.OpenAI(api_key=api_key)
-                
-                response = client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": request.message}
-                    ],
-                    max_tokens=1000,
-                    temperature=0.7
-                )
-                ai_response = response.choices[0].message.content
+            raise HTTPException(status_code=500, detail="OpenAI integration not available")
+        
+        client = openai.OpenAI(api_key=api_key)
+        
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": request.message}
+            ],
+            max_tokens=1000,
+            temperature=0.7
+        )
+        ai_response = response.choices[0].message.content
 
         # Save assistant response (if MongoDB available)
         if db:
@@ -263,27 +260,26 @@ async def chat_stream(request: ChatRequest):
     
     def generate_stream():
         try:
-            # For now, send non-streaming response until we implement proper streaming
             api_key = os.environ.get("OPENAI_API_KEY")
             if not api_key:
                 yield f"data: {json.dumps({'error': 'OpenAI API key not configured'})}\n\n"
                 return
             
-            # Generate response
             if not INTEGRATION_AVAILABLE:
-                response_text = f"Привет! Меня зовут Алеся. Я специалист по Конституции Республики Беларусь редакции 2022 года. Вы спросили: '{request.message}'. К сожалению, интеграция с LLM временно недоступна, но я готова помочь вам с вопросами по Конституции Беларуси, как только сервис будет восстановлен."
-            else:
-                client = openai.OpenAI(api_key=api_key)
-                response = client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": request.message}
-                    ],
-                    max_tokens=1000,
-                    temperature=0.7
-                )
-                response_text = response.choices[0].message.content
+                yield f"data: {json.dumps({'error': 'OpenAI integration not available'})}\n\n"
+                return
+            
+            client = openai.OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": request.message}
+                ],
+                max_tokens=1000,
+                temperature=0.7
+            )
+            response_text = response.choices[0].message.content
             
             # Simulate streaming by sending words one by one
             words = response_text.split()
