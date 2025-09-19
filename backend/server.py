@@ -110,13 +110,26 @@ async def health():
 async def api_health():
     return {"status": "ok"}
 
+def _has_openai_key() -> bool:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    return bool(api_key and api_key.strip())
+
+
 @app.get("/api/capabilities")
 async def get_capabilities():
     """Get available capabilities"""
+    api_key_available = _has_openai_key()
+    chat_available = INTEGRATION_AVAILABLE and api_key_available
+    voice_mode_available = VOICE_MODE_AVAILABLE and api_key_available
+    mongodb_available = db is not None
+
     return {
-        "chat": INTEGRATION_AVAILABLE,
-        "voice_mode": VOICE_MODE_AVAILABLE,
-        "mongodb": db is not None
+        "chat": chat_available,
+        "chat_available": chat_available,
+        "voice_mode": voice_mode_available,
+        "voice_mode_available": voice_mode_available,
+        "mongodb": mongodb_available,
+        "mongodb_available": mongodb_available,
     }
 
 def prepare_for_mongo(data):
@@ -151,11 +164,11 @@ async def chat(request: ChatRequest):
 
         # Generate response using OpenAI
         api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
-        
+        if not _has_openai_key():
+            raise HTTPException(status_code=503, detail="OpenAI API key not configured")
+
         if not INTEGRATION_AVAILABLE:
-            raise HTTPException(status_code=500, detail="OpenAI integration not available")
+            raise HTTPException(status_code=503, detail="OpenAI integration not available")
         
         client = OpenAI(api_key=api_key)
         
@@ -201,7 +214,7 @@ async def chat(request: ChatRequest):
 
 
 class ChatHistoryResponse(BaseModel):
-    messages: List[ChatMessage] = []
+    messages: List[ChatMessage] = Field(default_factory=list)
 
 
 def serialize_chat_message(raw_message) -> ChatMessage:
@@ -245,10 +258,10 @@ async def create_aleya_session(request: Request):
     try:
         if not VOICE_MODE_AVAILABLE:
             raise HTTPException(status_code=503, detail="Voice Mode not available")
-        
+
         api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+        if not _has_openai_key():
+            raise HTTPException(status_code=503, detail="OpenAI API key not configured")
         
         # Get request body if any
         body = {}
@@ -282,10 +295,10 @@ async def chat_stream(request: ChatRequest):
     def generate_stream():
         try:
             api_key = os.environ.get("OPENAI_API_KEY")
-            if not api_key:
+            if not _has_openai_key():
                 yield f"data: {json.dumps({'error': 'OpenAI API key not configured'})}\n\n"
                 return
-            
+
             if not INTEGRATION_AVAILABLE:
                 yield f"data: {json.dumps({'error': 'OpenAI integration not available'})}\n\n"
                 return
