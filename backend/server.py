@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import List, Optional
 # MongoDB imports - only ObjectId needed for PyObjectId
@@ -20,6 +21,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="docs/static"), name="static")
 
 # MongoDB setup - disabled for Railway deployment
 # MONGO_URL = os.environ.get("MONGO_URL")
@@ -104,7 +108,7 @@ except ImportError as e:
 
 @app.get("/")
 async def root():
-    return {"message": "AI-ассистент по Конституции Республики Беларусь"}
+    return FileResponse("docs/index.html")
 
 @app.get("/health")
 async def health():
