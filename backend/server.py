@@ -283,31 +283,34 @@ async def transcribe(file: UploadFile = File(...)) -> TranscriptionResponse:
 async def voice_session(payload: VoiceSessionRequest) -> dict:
     client = _get_openai_client()
 
-    request_args = {
-        "model": payload.model or _default_voice_model(),
-        "voice": payload.voice or _default_voice_name(),
-    }
-
+    model = payload.model or _default_voice_model()
+    voice = payload.voice or _default_voice_name()
     instructions = (
         payload.instructions
         or os.getenv("OPENAI_VOICE_INSTRUCTIONS")
         or SYSTEM_PROMPT
     )
-    if instructions:
-        request_args["instructions"] = instructions
 
     try:
-        session = client.realtime.sessions.create(**request_args)
+        session = client.api_keys.create_ephemeral(model=model)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
 
     if hasattr(session, "model_dump"):
-        return session.model_dump()
+        session_payload = session.model_dump()
+    elif isinstance(session, dict):
+        session_payload = session
+    else:
+        session_payload = json.loads(
+            json.dumps(session, default=lambda o: getattr(o, "__dict__", str(o)))
+        )
 
-    if isinstance(session, dict):
-        return session
+    session_payload.setdefault("model", model)
+    session_payload.setdefault("voice", voice)
+    if instructions:
+        session_payload.setdefault("instructions", instructions)
 
-    return json.loads(json.dumps(session, default=lambda o: getattr(o, "__dict__", str(o))))
+    return session_payload
 
 
 @app.post("/api/voice/realtime/negotiate")
