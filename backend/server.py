@@ -101,7 +101,8 @@ def _default_chat_model() -> str:
 
 
 def _default_voice_model() -> str:
-    return os.getenv("OPENAI_VOICE_MODEL", "gpt-4o-realtime-preview-latest")
+    # Используем актуальную модель Realtime API
+    return os.getenv("OPENAI_VOICE_MODEL", "gpt-4o-realtime-preview-2024-12-17")
 
 
 def _default_voice_name() -> str:
@@ -338,6 +339,9 @@ async def transcribe(file: UploadFile = File(...)) -> TranscriptionResponse:
 
 @app.post("/api/voice/realtime/session")
 async def voice_session(payload: VoiceSessionRequest) -> dict:
+    """
+    Создание сессии для Voice Mode с использованием актуального OpenAI Realtime API
+    """
     model = payload.model or _default_voice_model()
     voice = payload.voice or _default_voice_name()
     instructions = (
@@ -348,43 +352,79 @@ async def voice_session(payload: VoiceSessionRequest) -> dict:
 
     client = _get_openai_client()
 
-    request_payload: dict[str, object] = {"model": model, "voice": voice}
-    if instructions:
-        request_payload["instructions"] = instructions
+    # Используем актуальный API для создания сессии
+    request_payload: dict[str, object] = {
+        "model": model, 
+        "voice": voice,
+        "instructions": instructions
+    }
 
     try:
+        # Создаем сессию через актуальный API
         session = await run_in_threadpool(
             lambda: client.beta.realtime.sessions.create(**request_payload)
         )
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
+        
+        # Получаем данные сессии
+        if hasattr(session, "model_dump"):
+            session_payload = session.model_dump()
+        else:
+            session_payload = json.loads(session.model_dump_json())
 
-    if hasattr(session, "model_dump"):
-        session_payload = session.model_dump()
-    else:  # pragma: no cover - fallback for older client versions
-        session_payload = json.loads(session.model_dump_json())
+        # Проверяем наличие client_secret
+        if "client_secret" not in session_payload:
+            raise HTTPException(
+                status_code=502, 
+                detail="OpenAI realtime session missing client_secret"
+            )
 
-    # Ensure we have the required client_secret structure
-    if "client_secret" not in session_payload:
-        raise HTTPException(status_code=502, detail="OpenAI realtime session missing client_secret")
+        # Извлекаем client_secret для WebSocket URL
+        client_secret = session_payload["client_secret"]
+        if isinstance(client_secret, dict) and "value" in client_secret:
+            client_secret_value = client_secret["value"]
+        else:
+            raise HTTPException(
+                status_code=502, 
+                detail="Invalid client_secret format"
+            )
 
-    # Extract client_secret value for WebSocket URL
-    client_secret = session_payload["client_secret"]
-    if isinstance(client_secret, dict) and "value" in client_secret:
-        client_secret_value = client_secret["value"]
-    else:
-        raise HTTPException(status_code=502, detail="Invalid client_secret format")
+        # Формируем правильный WebSocket URL для Realtime API
+        websocket_url = f"wss://api.openai.com/v1/realtime?model={model}&client_secret={client_secret_value}"
+        session_payload["websocket_url"] = websocket_url
 
-    # Add WebSocket URL for direct connection to Realtime API
-    websocket_url = f"wss://api.openai.com/v1/realtime?model={model}&client_secret={client_secret_value}"
-    session_payload["websocket_url"] = websocket_url
-
-    session_payload.setdefault("model", model)
-    session_payload.setdefault("voice", voice)
-    if instructions:
+        # Добавляем метаданные
+        session_payload.setdefault("model", model)
+        session_payload.setdefault("voice", voice)
         session_payload.setdefault("instructions", instructions)
 
-    return session_payload
+        return session_payload
+
+    except Exception as exc:  # noqa: BLE001
+        error_detail = _exception_detail(exc)
+        
+        # Обрабатываем специфичные ошибки
+        if "unsupported_country_region_territory" in error_detail:
+            raise HTTPException(
+                status_code=403, 
+                detail="OpenAI Realtime API недоступен в вашем регионе. Используйте VPN или обратитесь к администратору."
+            ) from exc
+        elif "404" in error_detail or "not found" in error_detail.lower():
+            raise HTTPException(
+                status_code=404, 
+                detail="OpenAI Realtime API endpoint не найден. Проверьте модель и настройки."
+            ) from exc
+        else:
+            # Для других ошибок возвращаем 502, но с правильным статусом в деталях
+            if "403" in error_detail:
+                raise HTTPException(
+                    status_code=403, 
+                    detail="OpenAI Realtime API недоступен в вашем регионе. Используйте VPN или обратитесь к администратору."
+                ) from exc
+            else:
+                raise HTTPException(
+                    status_code=502, 
+                    detail=f"Ошибка создания Voice Mode сессии: {error_detail}"
+                ) from exc
 
 
 if __name__ == "__main__":

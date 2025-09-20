@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = 'https://web-production-9ed88.up.railway.app';
 const VERSION = '2.0.0'; // Force cache refresh
 
 // Voice Mode WebSocket Class
@@ -119,12 +119,23 @@ class RealtimeAudioChat {
   async connectWebSocket() {
     return new Promise((resolve, reject) => {
       try {
+        console.log('Подключение к WebSocket:', this.websocketUrl);
         this.websocket = new WebSocket(this.websocketUrl);
         
+        // Таймаут для подключения
+        const connectionTimeout = setTimeout(() => {
+          if (this.websocket.readyState !== WebSocket.OPEN) {
+            console.error('WebSocket connection timeout');
+            this.websocket.close();
+            reject(new Error('WebSocket connection timeout'));
+          }
+        }, 10000); // 10 секунд
+        
         this.websocket.onopen = () => {
-          console.log('WebSocket connected to Realtime API');
+          console.log('WebSocket подключен к Realtime API');
+          clearTimeout(connectionTimeout);
           
-          // Send session configuration
+          // Отправляем конфигурацию сессии
           this.websocket.send(JSON.stringify({
             type: 'session.update',
             session: {
@@ -134,7 +145,7 @@ class RealtimeAudioChat {
             }
           }));
 
-          // Start audio recording
+          // Начинаем запись аудио
           this.startRecording();
           
           resolve();
@@ -145,26 +156,59 @@ class RealtimeAudioChat {
             const data = JSON.parse(event.data);
             this.handleWebSocketMessage(data);
           } catch (error) {
-            console.error('Error parsing WebSocket message:', error);
+            console.error('Ошибка парсинга WebSocket сообщения:', error);
           }
         };
 
         this.websocket.onerror = (error) => {
-          console.error('WebSocket error:', error);
-          if (this.onError) {
-            this.onError('WebSocket connection failed');
+          console.error('WebSocket ошибка:', error);
+          clearTimeout(connectionTimeout);
+          
+          // Определяем тип ошибки
+          let errorMessage = 'WebSocket соединение не удалось';
+          if (this.websocket.readyState === WebSocket.CLOSED) {
+            errorMessage = 'WebSocket соединение закрыто (возможно, проблема с регионом)';
+          } else if (this.websocket.readyState === WebSocket.CONNECTING) {
+            errorMessage = 'Не удалось подключиться к WebSocket (проверьте VPN)';
           }
-          reject(error);
+          
+          if (this.onError) {
+            this.onError(errorMessage);
+          }
+          reject(new Error(errorMessage));
         };
 
-        this.websocket.onclose = () => {
-          console.log('WebSocket disconnected');
+        this.websocket.onclose = (event) => {
+          console.log('WebSocket отключен:', event.code, event.reason);
+          clearTimeout(connectionTimeout);
+          
+          // Анализируем код закрытия
+          let closeReason = 'Неизвестная причина';
+          switch (event.code) {
+            case 1006:
+              closeReason = 'Соединение потеряно (возможно, проблема с регионом)';
+              break;
+            case 1011:
+              closeReason = 'Ошибка сервера';
+              break;
+            case 1000:
+              closeReason = 'Нормальное закрытие';
+              break;
+            default:
+              closeReason = `Код: ${event.code}`;
+          }
+          
           if (this.onStatusChange) {
             this.onStatusChange('disconnected');
+          }
+          
+          if (event.code !== 1000 && this.onError) {
+            this.onError(`WebSocket закрыт: ${closeReason}`);
           }
         };
 
       } catch (error) {
+        console.error('Ошибка создания WebSocket:', error);
         reject(error);
       }
     });
