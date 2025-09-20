@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Dict, List
+from urllib.parse import urlencode, urlparse, urlunparse
 
 import httpx
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
@@ -148,6 +149,29 @@ def _get_openai_client() -> OpenAI:
     if OPENAI_API_BASE:
         client_kwargs["base_url"] = OPENAI_API_BASE
     return OpenAI(**client_kwargs)
+
+
+def _build_realtime_ws_url(model: str, client_secret: str) -> str:
+    """Собираем WebSocket URL с учетом возможного прокси."""
+
+    base_url = (OPENAI_API_BASE or "https://api.openai.com/v1").rstrip("/")
+    parsed = urlparse(base_url)
+
+    scheme = parsed.scheme.lower() if parsed.scheme else "https"
+    if scheme in {"http", "ws"}:
+        ws_scheme = "ws"
+    else:
+        ws_scheme = "wss"
+
+    path = parsed.path.rstrip("/")
+    if path:
+        path = f"{path}/realtime"
+    else:
+        path = "/realtime"
+
+    query = urlencode({"model": model, "client_secret": client_secret})
+
+    return urlunparse((ws_scheme, parsed.netloc, path, "", query, ""))
 
 
 def _append_message(session_id: str, role: str, content: str) -> ChatMessage:
@@ -394,7 +418,7 @@ async def voice_session(payload: VoiceSessionRequest) -> dict:
             )
 
         # Формируем правильный WebSocket URL для Realtime API
-        websocket_url = f"wss://api.openai.com/v1/realtime?model={model}&client_secret={client_secret_value}"
+        websocket_url = _build_realtime_ws_url(model, client_secret_value)
         session_payload["websocket_url"] = websocket_url
 
         # Добавляем метаданные
