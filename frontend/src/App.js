@@ -36,8 +36,11 @@ class RealtimeAudioChat {
     this.pendingResponseText = "";
     this.silenceStart = null;
     this.sampleRate = 24000;
-    this.silenceThreshold = 0.0008;
-    this.minSilenceMs = 800;
+    this.silenceThreshold = 0.0012;
+    this.minSilenceMs = 600;
+    this.maxPendingDuration = 4000;
+    this.lastVoiceActivity = 0;
+    this.lastCommitTime = 0;
   }
 
   async init() {
@@ -104,6 +107,14 @@ class RealtimeAudioChat {
     this.audioContext = new AudioContextClass({ sampleRate: this.sampleRate });
     this.playbackContext = new AudioContextClass({ sampleRate: this.sampleRate });
 
+    if (this.audioContext?.state === 'suspended') {
+      await this.audioContext.resume().catch(() => null);
+    }
+
+    if (this.playbackContext?.state === 'suspended') {
+      await this.playbackContext.resume().catch(() => null);
+    }
+
     this.microphoneSource = this.audioContext.createMediaStreamSource(this.localStream);
     this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
     this.outputGain = this.audioContext.createGain();
@@ -134,21 +145,25 @@ class RealtimeAudioChat {
         this.hasPendingInput = true;
       }
 
-      const rms = this.calculateRMS(inputBuffer);
       const now = performance.now();
-      if (rms < this.silenceThreshold) {
-        if (this.silenceStart === null) {
-          this.silenceStart = now;
-        }
-        if (
-          this.hasPendingInput &&
-          now - this.silenceStart >= this.minSilenceMs &&
-          !this.awaitingResponse
-        ) {
-          this.commitPendingAudio();
-        }
-      } else {
+      const rms = this.calculateRMS(inputBuffer);
+
+      if (rms >= this.silenceThreshold) {
+        this.lastVoiceActivity = now;
         this.silenceStart = null;
+      } else if (this.silenceStart === null) {
+        this.silenceStart = now;
+      }
+
+      if (
+        this.hasPendingInput &&
+        !this.awaitingResponse &&
+        (
+          (this.silenceStart !== null && now - this.silenceStart >= this.minSilenceMs) ||
+          (now - this.lastCommitTime >= this.maxPendingDuration)
+        )
+      ) {
+        this.commitPendingAudio();
       }
     };
   }
@@ -404,6 +419,10 @@ class RealtimeAudioChat {
       this.playbackContext = new AudioContextClass({ sampleRate: this.sampleRate });
     }
 
+    if (this.playbackContext?.state === 'suspended') {
+      this.playbackContext.resume().catch(() => null);
+    }
+
     const pcm16 = this.base64ToInt16(base64Audio);
     if (!pcm16.length) {
       return;
@@ -442,6 +461,7 @@ class RealtimeAudioChat {
     this.awaitingResponse = true;
     this.hasPendingInput = false;
     this.silenceStart = null;
+    this.lastCommitTime = performance.now();
   }
 
   sendJson(payload) {
@@ -479,6 +499,9 @@ class RealtimeAudioChat {
 
     this.audioQueueTime = 0;
     this.silenceStart = null;
+    this.hasPendingInput = false;
+    this.lastVoiceActivity = 0;
+    this.lastCommitTime = 0;
   }
 
   disconnect() {
