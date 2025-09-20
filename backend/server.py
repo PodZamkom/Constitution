@@ -368,16 +368,17 @@ async def voice_session(payload: VoiceSessionRequest) -> dict:
     if "client_secret" not in session_payload:
         raise HTTPException(status_code=502, detail="OpenAI realtime session missing client_secret")
 
-    # Extract client_secret value for WebSocket URL
+    # Extract client_secret value for WebSocket URL and browser subprotocol auth
     client_secret = session_payload["client_secret"]
     if isinstance(client_secret, dict) and "value" in client_secret:
         client_secret_value = client_secret["value"]
     else:
         raise HTTPException(status_code=502, detail="Invalid client_secret format")
 
-    # Add WebSocket URL for direct connection to Realtime API
-    websocket_url = f"wss://api.openai.com/v1/realtime?model={model}&client_secret={client_secret_value}"
+    # Provide WebSocket URL and explicit client_secret for browser WebSocket subprotocol
+    websocket_url = f"wss://api.openai.com/v1/realtime?model={model}"
     session_payload["websocket_url"] = websocket_url
+    session_payload["client_secret_value"] = client_secret_value
 
     session_payload.setdefault("model", model)
     session_payload.setdefault("voice", voice)
