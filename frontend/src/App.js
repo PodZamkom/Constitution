@@ -1,7 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
-const BACKEND_URL = 'http://localhost:8000';
+const resolveBackendUrl = () => {
+  const envUrl = (process.env.REACT_APP_BACKEND_URL || '').trim();
+  if (envUrl) {
+    return envUrl.replace(/\/+$/, '');
+  }
+
+  if (typeof window !== 'undefined') {
+    const { hostname } = window.location;
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+      return 'http://localhost:8000';
+    }
+    return '';
+  }
+
+  return 'http://localhost:8000';
+};
+
+const BACKEND_URL = resolveBackendUrl();
 const VERSION = '2.0.0'; // Force cache refresh
 
 // Voice Mode WebSocket Class
