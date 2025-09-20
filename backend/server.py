@@ -144,7 +144,10 @@ def _get_openai_client() -> OpenAI:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(status_code=503, detail="OpenAI API key is missing")
-    return OpenAI(api_key=api_key)
+    client_kwargs = {"api_key": api_key}
+    if OPENAI_API_BASE:
+        client_kwargs["base_url"] = OPENAI_API_BASE
+    return OpenAI(**client_kwargs)
 
 
 def _append_message(session_id: str, role: str, content: str) -> ChatMessage:
