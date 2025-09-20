@@ -13,7 +13,6 @@ class RealtimeAudioChat {
     instructions,
   }) {
     this.websocket = null;
-    this.audioElement = null;
     this.websocketUrl = null;
     this.sessionModel = model || "gpt-4o-realtime-preview-latest";
     this.backendUrl = backendUrl;
@@ -21,16 +20,33 @@ class RealtimeAudioChat {
     this.instructions = instructions || null;
     this.onStatusChange = null;
     this.onError = null;
+    this.onPartialText = null;
+    this.onFinalText = null;
+    this.onUserTranscript = null;
     this.localStream = null;
-    this.mediaRecorder = null;
-    this.isRecording = false;
+    this.audioContext = null;
+    this.playbackContext = null;
+    this.microphoneSource = null;
+    this.processor = null;
+    this.outputGain = null;
+    this.audioQueueTime = 0;
+    this.hasPendingInput = false;
+    this.awaitingResponse = false;
+    this.pendingResponseId = null;
+    this.pendingResponseText = "";
+    this.silenceStart = null;
+    this.sampleRate = 24000;
+    this.silenceThreshold = 0.0012;
+    this.minSilenceMs = 600;
+    this.maxPendingDuration = 4000;
+    this.lastVoiceActivity = 0;
+    this.lastCommitTime = 0;
   }
 
   async init() {
     try {
       console.log('Initializing Voice Mode for Алеся... (v2.0.0 - WebSocket)');
-      
-      // Get session from backend
+
       const tokenResponse = await fetch(`${this.backendUrl}/api/voice/realtime/session`, {
         method: "POST",
         headers: {
@@ -46,31 +62,20 @@ class RealtimeAudioChat {
       if (!tokenResponse.ok) {
         throw new Error(`Session request failed: ${tokenResponse.status}`);
       }
-      
+
       const data = await tokenResponse.json();
       if (!data.websocket_url) {
         throw new Error("Failed to get WebSocket URL");
       }
-      
+
       this.websocketUrl = data.websocket_url;
       this.sessionModel = data.model || this.sessionModel;
       this.instructions = data.instructions || this.instructions;
 
       console.log('Voice Mode session created successfully');
 
-      // Setup audio element for playback
-      this.setupAudioElement();
-      
-      // Setup microphone access
       await this.setupLocalAudio();
-      
-      // Connect to WebSocket
       await this.connectWebSocket();
-
-      if (this.onStatusChange) {
-        this.onStatusChange('connected');
-      }
-
     } catch (error) {
       console.error("Failed to initialize Алеся audio chat:", error);
       if (this.onError) {
@@ -80,16 +85,11 @@ class RealtimeAudioChat {
     }
   }
 
-  setupAudioElement() {
-    if (!this.audioElement) {
-      this.audioElement = document.createElement("audio");
-      this.audioElement.autoplay = true;
-      this.audioElement.playsInline = true;
-      document.body.appendChild(this.audioElement);
-    }
-  }
-
   async setupLocalAudio() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('Браузер не поддерживает доступ к микрофону');
+    }
+
     this.localStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
@@ -103,15 +103,67 @@ class RealtimeAudioChat {
       throw new Error('Не удалось получить доступ к микрофону');
     }
 
-    // Setup MediaRecorder for audio capture
-    this.mediaRecorder = new MediaRecorder(this.localStream, {
-      mimeType: 'audio/webm;codecs=opus'
-    });
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    this.audioContext = new AudioContextClass({ sampleRate: this.sampleRate });
+    this.playbackContext = new AudioContextClass({ sampleRate: this.sampleRate });
 
-    this.mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0 && this.websocket && this.websocket.readyState === WebSocket.OPEN) {
-        // Send audio data to WebSocket
-        this.websocket.send(event.data);
+    if (this.audioContext?.state === 'suspended') {
+      await this.audioContext.resume().catch(() => null);
+    }
+
+    if (this.playbackContext?.state === 'suspended') {
+      await this.playbackContext.resume().catch(() => null);
+    }
+
+    this.microphoneSource = this.audioContext.createMediaStreamSource(this.localStream);
+    this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+    this.outputGain = this.audioContext.createGain();
+    this.outputGain.gain.value = 0;
+
+    this.microphoneSource.connect(this.processor);
+    this.processor.connect(this.outputGain);
+    this.outputGain.connect(this.audioContext.destination);
+
+    this.processor.onaudioprocess = (event) => {
+      if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      const inputBuffer = event.inputBuffer.getChannelData(0);
+      if (!inputBuffer?.length) {
+        return;
+      }
+
+      const pcm16 = this.floatTo16BitPCM(inputBuffer);
+      const base64Audio = this.arrayBufferToBase64(pcm16.buffer);
+
+      if (base64Audio) {
+        this.sendJson({
+          type: 'input_audio_buffer.append',
+          audio: base64Audio
+        });
+        this.hasPendingInput = true;
+      }
+
+      const now = performance.now();
+      const rms = this.calculateRMS(inputBuffer);
+
+      if (rms >= this.silenceThreshold) {
+        this.lastVoiceActivity = now;
+        this.silenceStart = null;
+      } else if (this.silenceStart === null) {
+        this.silenceStart = now;
+      }
+
+      if (
+        this.hasPendingInput &&
+        !this.awaitingResponse &&
+        (
+          (this.silenceStart !== null && now - this.silenceStart >= this.minSilenceMs) ||
+          (now - this.lastCommitTime >= this.maxPendingDuration)
+        )
+      ) {
+        this.commitPendingAudio();
       }
     };
   }
@@ -120,58 +172,52 @@ class RealtimeAudioChat {
     return new Promise((resolve, reject) => {
       try {
         console.log('Подключение к WebSocket:', this.websocketUrl);
-        this.websocket = new WebSocket(this.websocketUrl);
-        
-        // Таймаут для подключения
+        this.websocket = new WebSocket(this.websocketUrl, ['realtime']);
+
         const connectionTimeout = setTimeout(() => {
           if (this.websocket.readyState !== WebSocket.OPEN) {
             console.error('WebSocket connection timeout');
             this.websocket.close();
             reject(new Error('WebSocket connection timeout'));
           }
-        }, 10000); // 10 секунд
-        
+        }, 10000);
+
         this.websocket.onopen = () => {
           console.log('WebSocket подключен к Realtime API');
           clearTimeout(connectionTimeout);
-          
-          // Отправляем конфигурацию сессии
-          this.websocket.send(JSON.stringify({
+
+          this.sendJson({
             type: 'session.update',
             session: {
               instructions: this.instructions,
               voice: this.voiceName,
-              model: this.sessionModel
+              model: this.sessionModel,
+              modalities: ['text', 'audio']
             }
-          }));
+          });
 
-          // Начинаем запись аудио
-          this.startRecording();
-          
+          if (this.onStatusChange) {
+            this.onStatusChange('connected');
+          }
+
           resolve();
         };
 
         this.websocket.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            this.handleWebSocketMessage(data);
-          } catch (error) {
-            console.error('Ошибка парсинга WebSocket сообщения:', error);
-          }
+          this.processWebSocketData(event.data);
         };
 
         this.websocket.onerror = (error) => {
           console.error('WebSocket ошибка:', error);
           clearTimeout(connectionTimeout);
-          
-          // Определяем тип ошибки
+
           let errorMessage = 'WebSocket соединение не удалось';
           if (this.websocket.readyState === WebSocket.CLOSED) {
             errorMessage = 'WebSocket соединение закрыто (возможно, проблема с регионом)';
           } else if (this.websocket.readyState === WebSocket.CONNECTING) {
             errorMessage = 'Не удалось подключиться к WebSocket (проверьте VPN)';
           }
-          
+
           if (this.onError) {
             this.onError(errorMessage);
           }
@@ -181,8 +227,7 @@ class RealtimeAudioChat {
         this.websocket.onclose = (event) => {
           console.log('WebSocket отключен:', event.code, event.reason);
           clearTimeout(connectionTimeout);
-          
-          // Анализируем код закрытия
+
           let closeReason = 'Неизвестная причина';
           switch (event.code) {
             case 1006:
@@ -197,11 +242,13 @@ class RealtimeAudioChat {
             default:
               closeReason = `Код: ${event.code}`;
           }
-          
+
+          this.cleanupAudioProcessing();
+
           if (this.onStatusChange) {
             this.onStatusChange('disconnected');
           }
-          
+
           if (event.code !== 1000 && this.onError) {
             this.onError(`WebSocket закрыт: ${closeReason}`);
           }
@@ -214,86 +261,264 @@ class RealtimeAudioChat {
     });
   }
 
+  processWebSocketData(rawData) {
+    if (!rawData) {
+      return;
+    }
+
+    if (rawData instanceof ArrayBuffer) {
+      console.warn('Получены бинарные данные из Realtime API, которые не поддерживаются напрямую');
+      return;
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(rawData);
+    } catch (error) {
+      console.error('Ошибка парсинга WebSocket сообщения:', error);
+      return;
+    }
+
+    this.handleWebSocketMessage(payload);
+  }
+
   handleWebSocketMessage(data) {
-    console.log('Received WebSocket message:', data);
-    
+    if (!data?.type) {
+      return;
+    }
+
     switch (data.type) {
-      case 'response.audio.delta':
-        // Handle audio response
-        if (data.delta && this.audioElement) {
-          // Convert base64 audio to blob and play
-          const audioBlob = this.base64ToBlob(data.delta, 'audio/mpeg');
-          const audioUrl = URL.createObjectURL(audioBlob);
-          this.audioElement.src = audioUrl;
-          this.audioElement.play();
+      case 'session.created':
+        if (this.onStatusChange) {
+          this.onStatusChange('ready');
         }
         break;
-        
-      case 'response.done':
-        console.log('Response completed');
+
+      case 'session.updated':
+        if (this.onStatusChange) {
+          this.onStatusChange('ready');
+        }
         break;
-        
+
+      case 'response.created':
+        this.awaitingResponse = true;
+        this.pendingResponseId = data.response?.id || null;
+        this.pendingResponseText = '';
+        break;
+
+      case 'response.output_text.delta':
+        if (typeof data.delta === 'string') {
+          this.pendingResponseText += data.delta;
+          if (this.onPartialText) {
+            this.onPartialText(this.pendingResponseText);
+          }
+        }
+        break;
+
+      case 'response.output_text.done':
+      case 'response.completed': {
+        const text = (this.pendingResponseText || '').trim();
+        if (text && this.onFinalText) {
+          this.onFinalText(text);
+        }
+        this.pendingResponseText = '';
+        this.pendingResponseId = null;
+        this.awaitingResponse = false;
+        break;
+      }
+
+      case 'response.refusal':
+        this.pendingResponseText = '';
+        this.pendingResponseId = null;
+        this.awaitingResponse = false;
+        break;
+
+      case 'response.audio.delta':
+      case 'response.output_audio.delta': {
+        const delta = data.delta || data.audio;
+        if (typeof delta === 'string' && delta.length) {
+          this.playAudioDelta(delta);
+        }
+        break;
+      }
+
+      case 'input_audio_buffer.committed':
+        break;
+
+      case 'input_audio_buffer.transcription.delta':
+        if (this.onUserTranscript && typeof data.delta === 'string') {
+          this.onUserTranscript(data.delta, false);
+        }
+        break;
+
+      case 'input_audio_buffer.transcription.completed':
+        if (this.onUserTranscript) {
+          const transcript = data.transcription || '';
+          this.onUserTranscript(transcript, true);
+        }
+        break;
+
       case 'error':
         console.error('Realtime API error:', data.error);
+        this.awaitingResponse = false;
         if (this.onError) {
-          this.onError(data.error.message || 'Unknown error');
+          const message = data.error?.message || 'Unknown error';
+          this.onError(message);
         }
         break;
-        
+
       default:
-        console.log('Unknown message type:', data.type);
+        console.log('Unhandled Realtime message:', data.type, data);
     }
   }
 
-  startRecording() {
-    if (this.mediaRecorder && this.mediaRecorder.state === 'inactive') {
-      this.mediaRecorder.start(100); // Send data every 100ms
-      this.isRecording = true;
-      console.log('Started recording');
+  calculateRMS(buffer) {
+    let sumSquares = 0;
+    for (let i = 0; i < buffer.length; i++) {
+      const value = buffer[i];
+      sumSquares += value * value;
+    }
+    return Math.sqrt(sumSquares / buffer.length);
+  }
+
+  floatTo16BitPCM(float32Array) {
+    const buffer = new ArrayBuffer(float32Array.length * 2);
+    const view = new DataView(buffer);
+    for (let i = 0; i < float32Array.length; i++) {
+      let sample = float32Array[i];
+      sample = Math.max(-1, Math.min(1, sample));
+      view.setInt16(i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    }
+    return new Int16Array(buffer);
+  }
+
+  arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode.apply(null, chunk);
+    }
+    return btoa(binary);
+  }
+
+  base64ToInt16(base64) {
+    const binary = atob(base64);
+    const buffer = new ArrayBuffer(binary.length);
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Int16Array(buffer);
+  }
+
+  playAudioDelta(base64Audio) {
+    if (!this.playbackContext) {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      this.playbackContext = new AudioContextClass({ sampleRate: this.sampleRate });
+    }
+
+    if (this.playbackContext?.state === 'suspended') {
+      this.playbackContext.resume().catch(() => null);
+    }
+
+    const pcm16 = this.base64ToInt16(base64Audio);
+    if (!pcm16.length) {
+      return;
+    }
+
+    const audioBuffer = this.playbackContext.createBuffer(1, pcm16.length, this.sampleRate);
+    const channelData = audioBuffer.getChannelData(0);
+    for (let i = 0; i < pcm16.length; i++) {
+      channelData[i] = pcm16[i] / 0x8000;
+    }
+
+    const source = this.playbackContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(this.playbackContext.destination);
+
+    const startTime = Math.max(this.playbackContext.currentTime, this.audioQueueTime || this.playbackContext.currentTime);
+    source.start(startTime);
+    this.audioQueueTime = startTime + audioBuffer.duration;
+  }
+
+  commitPendingAudio() {
+    if (!this.hasPendingInput || !this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    this.sendJson({ type: 'input_audio_buffer.commit' });
+    this.sendJson({
+      type: 'response.create',
+      response: {
+        modalities: ['text', 'audio'],
+        conversation: 'default',
+        instructions: this.instructions || undefined
+      }
+    });
+
+    this.awaitingResponse = true;
+    this.hasPendingInput = false;
+    this.silenceStart = null;
+    this.lastCommitTime = performance.now();
+  }
+
+  sendJson(payload) {
+    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+      this.websocket.send(JSON.stringify(payload));
     }
   }
 
-  stopRecording() {
-    if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
-      this.mediaRecorder.stop();
-      this.isRecording = false;
-      console.log('Stopped recording');
+  cleanupAudioProcessing() {
+    if (this.processor) {
+      this.processor.disconnect();
+      this.processor.onaudioprocess = null;
+      this.processor = null;
     }
-  }
 
-  base64ToBlob(base64, mimeType) {
-    const byteCharacters = atob(base64);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    if (this.microphoneSource) {
+      this.microphoneSource.disconnect();
+      this.microphoneSource = null;
     }
-    const byteArray = new Uint8Array(byteNumbers);
-    return new Blob([byteArray], { type: mimeType });
-  }
 
+    if (this.outputGain) {
+      this.outputGain.disconnect();
+      this.outputGain = null;
+    }
+
+    if (this.audioContext) {
+      this.audioContext.close().catch(() => null);
+      this.audioContext = null;
+    }
+
+    if (this.playbackContext) {
+      this.playbackContext.close().catch(() => null);
+      this.playbackContext = null;
+    }
+
+    this.audioQueueTime = 0;
+    this.silenceStart = null;
+    this.hasPendingInput = false;
+    this.lastVoiceActivity = 0;
+    this.lastCommitTime = 0;
+  }
 
   disconnect() {
-    // Stop recording
-    this.stopRecording();
+    this.commitPendingAudio();
 
-    // Close WebSocket connection
     if (this.websocket) {
       this.websocket.close();
       this.websocket = null;
     }
 
-    // Stop local audio stream
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => track.stop());
       this.localStream = null;
     }
 
-    // Remove audio element
-    if (this.audioElement) {
-      document.body.removeChild(this.audioElement);
-      this.audioElement = null;
-    }
-    
+    this.cleanupAudioProcessing();
+
     if (this.onStatusChange) {
       this.onStatusChange('disconnected');
     }
@@ -313,6 +538,7 @@ function App() {
   const [voiceModeStatus, setVoiceModeStatus] = useState('disconnected'); // disconnected, connecting, connected, ready
   const [voiceChat, setVoiceChat] = useState(null);
   const [capabilities, setCapabilities] = useState({});
+  const [voiceInterimText, setVoiceInterimText] = useState('');
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -321,7 +547,7 @@ function App() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, voiceInterimText]);
 
   useEffect(() => {
     // Load chat history and capabilities
@@ -507,7 +733,8 @@ function App() {
 
   const toggleVoiceMode = () => {
     setVoiceMode(!voiceMode);
-    
+    setVoiceInterimText('');
+
     // Disconnect existing voice chat when switching modes
     if (voiceChat && voiceModeStatus !== 'disconnected') {
       disconnectVoiceMode();
@@ -520,6 +747,7 @@ function App() {
       return;
     }
 
+    setVoiceInterimText('');
     setVoiceModeStatus('connecting');
 
     try {
@@ -533,15 +761,45 @@ function App() {
       newVoiceChat.onStatusChange = (status) => {
         setVoiceModeStatus(status);
       };
-      
+
       newVoiceChat.onError = (error) => {
         alert(`Ошибка Voice Mode: ${error}`);
+        setVoiceInterimText('');
         setVoiceModeStatus('disconnected');
       };
-      
+
+      newVoiceChat.onPartialText = (text) => {
+        setVoiceInterimText(text);
+      };
+
+      newVoiceChat.onFinalText = (text) => {
+        setVoiceInterimText('');
+        if (text.trim()) {
+          const assistantMessage = {
+            id: `voice_${Date.now()}`,
+            content: text.trim(),
+            role: 'assistant',
+            timestamp: new Date().toISOString()
+          };
+          setMessages(prev => [...prev, assistantMessage]);
+        }
+      };
+
+      newVoiceChat.onUserTranscript = (text, isFinal) => {
+        if (isFinal && text?.trim()) {
+          const userMessage = {
+            id: `voice_user_${Date.now()}`,
+            content: text.trim(),
+            role: 'user',
+            timestamp: new Date().toISOString()
+          };
+          setMessages(prev => [...prev, userMessage]);
+        }
+      };
+
       await newVoiceChat.init();
       setVoiceChat(newVoiceChat);
-      
+
     } catch (error) {
       console.error('Voice mode connection failed:', error);
       alert('Не удалось подключиться к Voice Mode. Попробуйте еще раз.');
@@ -554,6 +812,7 @@ function App() {
       voiceChat.disconnect();
       setVoiceChat(null);
     }
+    setVoiceInterimText('');
     setVoiceModeStatus('disconnected');
   };
 
@@ -630,7 +889,7 @@ function App() {
                 <div className="message-content">
                   <span className="message-text">{message.content}</span>
                   {message.role === 'assistant' && (
-                    <button 
+                    <button
                       className="tts-btn"
                       onClick={() => playTTS(message.content)}
                       title="Озвучить ответ"
@@ -644,7 +903,21 @@ function App() {
                 </div>
               </div>
             ))}
-            
+
+            {voiceMode && voiceInterimText && (
+              <div className="message assistant">
+                <div className="message-content loading">
+                  <span>{voiceInterimText}</span>
+                  <div className="loading-dots">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
+                </div>
+                <div className="message-time">{new Date().toLocaleTimeString('ru-RU')}</div>
+              </div>
+            )}
+
             {(isLoading || isTranscribing) && (
               <div className="message assistant">
                 <div className="message-content loading">

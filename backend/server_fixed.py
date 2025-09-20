@@ -235,7 +235,7 @@ if VOICE_MODE_AVAILABLE:
                         
                         # Create session with custom instructions
                         session = client.beta.realtime.sessions.create(
-                            model="gpt-4o-realtime-preview-2024-12-17",
+                            model="gpt-4o-realtime-preview-latest",
                             voice="shimmer",
                             instructions="Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
                         )
