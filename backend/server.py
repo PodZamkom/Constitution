@@ -156,6 +156,10 @@ def _append_message(session_id: str, role: str, content: str) -> ChatMessage:
 
 
 @app.get("/")
+async def root():
+    return {"message": "Belarus Constitution AI Assistant API", "status": "running"}
+
+@app.get("/frontend")
 async def serve_frontend() -> FileResponse:
     if FRONTEND_INDEX.exists():
         return FileResponse(FRONTEND_INDEX)
@@ -250,6 +254,58 @@ async def chat(request: ChatRequest) -> ChatResponse:
         response=content,
         session_id=session_id,
         message_id=assistant_message.id,
+    )
+
+
+@app.get("/api/stream-chat")
+async def stream_chat(session_id: str, message: str):
+    """Stream chat response using Server-Sent Events"""
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    _append_message(session_id, "user", message)
+
+    client = _get_openai_client()
+    model = _default_chat_model()
+
+    try:
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": message},
+            ],
+            stream=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        error_detail = _exception_detail(exc)
+        # Check if it's a region restriction error
+        if "unsupported_country_region_territory" in error_detail or "Country, region, or territory not supported" in error_detail:
+            raise HTTPException(
+                status_code=403, 
+                detail="OpenAI API недоступен в вашем регионе. Пожалуйста, используйте VPN или обратитесь к администратору."
+            ) from exc
+        raise HTTPException(status_code=502, detail=error_detail) from exc
+
+    from fastapi.responses import StreamingResponse
+    import asyncio
+
+    async def generate():
+        full_content = ""
+        for chunk in completion:
+            if chunk.choices and chunk.choices[0].delta.content:
+                content = chunk.choices[0].delta.content
+                full_content += content
+                yield f"data: {content}\n\n"
+        
+        # Save the complete response
+        if full_content.strip():
+            _append_message(session_id, "assistant", full_content.strip())
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/plain",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
     )
 
 
