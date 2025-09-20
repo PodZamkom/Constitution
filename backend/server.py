@@ -157,16 +157,18 @@ def _append_message(session_id: str, role: str, content: str) -> ChatMessage:
 
 
 @app.get("/")
-async def root():
-    return {"message": "Belarus Constitution AI Assistant API", "status": "running"}
-
-@app.get("/frontend")
 async def serve_frontend() -> FileResponse:
+    """Главная страница - отдаем фронтенд"""
     if FRONTEND_INDEX.exists():
         return FileResponse(FRONTEND_INDEX)
     if DOCS_INDEX.exists():
         return FileResponse(DOCS_INDEX)
     raise HTTPException(status_code=404, detail="Frontend build not found")
+
+@app.get("/api")
+async def api_root():
+    """API корневой эндпоинт - возвращает информацию об API"""
+    return {"message": "Belarus Constitution AI Assistant API", "status": "running"}
 
 
 @app.get("/favicon.ico")

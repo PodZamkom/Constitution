@@ -14,18 +14,38 @@ BASE_API_URL = f"{BACKEND_URL}/api"
 TEST_SESSION_ID = str(uuid.uuid4())
 
 def test_root_endpoint():
-    """Test root endpoint"""
+    """Test root endpoint (should serve frontend)"""
     try:
         response = requests.get(f"{BACKEND_URL}/", timeout=5)
         if response.status_code == 200:
-            data = response.json()
-            print(f"✅ Root endpoint: {data}")
-            return True
+            # Проверяем, что это HTML страница, а не JSON
+            content_type = response.headers.get('content-type', '')
+            if 'text/html' in content_type:
+                print("✅ Root endpoint serves frontend HTML")
+                return True
+            else:
+                print(f"⚠️ Root endpoint returned {content_type} instead of HTML")
+                return False
         else:
             print(f"❌ Root endpoint failed: {response.status_code}")
             return False
     except Exception as e:
         print(f"❌ Root endpoint error: {e}")
+        return False
+
+def test_api_endpoint():
+    """Test API root endpoint"""
+    try:
+        response = requests.get(f"{BACKEND_URL}/api", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            print(f"✅ API endpoint: {data}")
+            return True
+        else:
+            print(f"❌ API endpoint failed: {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ API endpoint error: {e}")
         return False
 
 def test_health_endpoint():
@@ -124,7 +144,8 @@ def main():
     results = []
     
     # Test basic connectivity
-    results.append(("Root Endpoint", test_root_endpoint()))
+    results.append(("Root Endpoint (Frontend)", test_root_endpoint()))
+    results.append(("API Endpoint", test_api_endpoint()))
     results.append(("Health Endpoint", test_health_endpoint()))
     results.append(("Capabilities Endpoint", test_capabilities_endpoint()))
     
