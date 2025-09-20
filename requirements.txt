@@ -4,7 +4,7 @@ openai
 pydantic
 pymongo
 python-dotenv
-httpx
+httpx>=0.27.0,<0.28.0
 aiohttp
 requests
 python-multipart

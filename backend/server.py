@@ -11,6 +11,7 @@ from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.concurrency import run_in_threadpool
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
@@ -104,7 +105,7 @@ def _default_voice_model() -> str:
 
 
 def _default_voice_name() -> str:
-    return os.getenv("OPENAI_VOICE", "alloy")
+    return os.getenv("OPENAI_VOICE", "verse")
 
 
 def _exception_detail(exc: Exception) -> str:
@@ -143,13 +144,6 @@ def _get_openai_client() -> OpenAI:
     if not api_key:
         raise HTTPException(status_code=503, detail="OpenAI API key is missing")
     return OpenAI(api_key=api_key)
-
-
-def _get_api_key() -> str:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="OpenAI API key is missing")
-    return api_key
 
 
 def _append_message(session_id: str, role: str, content: str) -> ChatMessage:
@@ -234,7 +228,14 @@ async def chat(request: ChatRequest) -> ChatResponse:
             ],
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
+        error_detail = _exception_detail(exc)
+        # Check if it's a region restriction error
+        if "unsupported_country_region_territory" in error_detail or "Country, region, or territory not supported" in error_detail:
+            raise HTTPException(
+                status_code=403, 
+                detail="OpenAI API недоступен в вашем регионе. Пожалуйста, используйте VPN или обратитесь к администратору."
+            ) from exc
+        raise HTTPException(status_code=502, detail=error_detail) from exc
 
     if not completion.choices:
         raise HTTPException(status_code=502, detail="Empty response from OpenAI")
@@ -281,81 +282,56 @@ async def transcribe(file: UploadFile = File(...)) -> TranscriptionResponse:
 
 @app.post("/api/voice/realtime/session")
 async def voice_session(payload: VoiceSessionRequest) -> dict:
-    api_key = _get_api_key()
-
-    request_body = {
-        "model": payload.model or _default_voice_model(),
-        "voice": payload.voice or _default_voice_name(),
-    }
-
+    model = payload.model or _default_voice_model()
+    voice = payload.voice or _default_voice_name()
     instructions = (
         payload.instructions
         or os.getenv("OPENAI_VOICE_INSTRUCTIONS")
         or SYSTEM_PROMPT
     )
+
+    client = _get_openai_client()
+
+    request_payload: dict[str, object] = {"model": model, "voice": voice}
     if instructions:
-        request_body["instructions"] = instructions
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "OpenAI-Beta": "realtime=v1",
-    }
+        request_payload["instructions"] = instructions
 
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(
-                f"{OPENAI_API_BASE.rstrip('/')}/realtime/sessions",
-                json=request_body,
-                headers=headers,
-            )
-    except httpx.HTTPError as exc:  # noqa: PERF203
+        session = await run_in_threadpool(
+            lambda: client.beta.realtime.sessions.create(**request_payload)
+        )
+    except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
 
-    if response.status_code >= 400:
-        raise HTTPException(status_code=response.status_code, detail=_http_error_detail(response))
+    if hasattr(session, "model_dump"):
+        session_payload = session.model_dump()
+    else:  # pragma: no cover - fallback for older client versions
+        session_payload = json.loads(session.model_dump_json())
 
-    return response.json()
+    # Ensure we have the required client_secret structure
+    if "client_secret" not in session_payload:
+        raise HTTPException(status_code=502, detail="OpenAI realtime session missing client_secret")
 
+    # Extract client_secret value for WebSocket URL
+    client_secret = session_payload["client_secret"]
+    if isinstance(client_secret, dict) and "value" in client_secret:
+        client_secret_value = client_secret["value"]
+    else:
+        raise HTTPException(status_code=502, detail="Invalid client_secret format")
 
-@app.post("/api/voice/realtime/negotiate")
-async def voice_negotiate(
-    request: Request,
-    authorization: str | None = Header(default=None),
-    x_openai_model: str | None = Header(default=None),
-) -> dict:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=400, detail="Missing Authorization bearer token")
+    # Add WebSocket URL for direct connection to Realtime API
+    websocket_url = f"wss://api.openai.com/v1/realtime?model={model}&client_secret={client_secret_value}"
+    session_payload["websocket_url"] = websocket_url
 
-    offer_sdp = await request.body()
-    if not offer_sdp:
-        raise HTTPException(status_code=400, detail="SDP offer is required")
+    session_payload.setdefault("model", model)
+    session_payload.setdefault("voice", voice)
+    if instructions:
+        session_payload.setdefault("instructions", instructions)
 
-    model = x_openai_model or _default_voice_model()
-
-    headers = {
-        "Authorization": authorization,
-        "Content-Type": "application/sdp",
-        "OpenAI-Beta": "realtime=v1",
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(
-                f"{OPENAI_API_BASE.rstrip('/')}/realtime?model={model}",
-                content=offer_sdp,
-                headers=headers,
-            )
-    except httpx.HTTPError as exc:  # noqa: PERF203
-        raise HTTPException(status_code=502, detail=_exception_detail(exc)) from exc
-
-    if response.status_code >= 400:
-        raise HTTPException(status_code=response.status_code, detail=_http_error_detail(response))
-
-    return {"sdp": response.text}
+    return session_payload
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("backend.server:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    uvicorn.run("server:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
