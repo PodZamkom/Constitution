@@ -19,7 +19,7 @@ class RealtimeAudioChat {
     try {
       console.log('Initializing Voice Mode for Алеся...');
       
-      // Get session from backend (simplified)
+      // Get session from backend
       const tokenResponse = await fetch(`${BACKEND_URL}/api/voice/realtime/session`, {
         method: "POST",
         headers: {
@@ -36,12 +36,13 @@ class RealtimeAudioChat {
       }
       
       const data = await tokenResponse.json();
-      if (!data.client_secret?.value) {
+      if (!data.client_secret) {
         throw new Error("Failed to get session token");
       }
+      
       // Save client_secret and model for subsequent negotiation
-      this.sessionToken = data.client_secret.value;
-      this.sessionModel = (data.model) || this.sessionModel;
+      this.sessionToken = data.client_secret;
+      this.sessionModel = data.model || this.sessionModel;
 
       console.log('Voice Mode session created successfully');
 
@@ -384,19 +385,10 @@ function App() {
     setVoiceModeStatus('connecting');
     
     try {
-      const newVoiceChat = new RealtimeAudioChat();
-      
-      newVoiceChat.onStatusChange = (status) => {
-        setVoiceModeStatus(status);
-      };
-      
-      newVoiceChat.onError = (error) => {
-        alert(`Ошибка Voice Mode: ${error}`);
-        setVoiceModeStatus('disconnected');
-      };
-      
-      await newVoiceChat.init();
-      setVoiceChat(newVoiceChat);
+      // For now, we'll use a simplified approach
+      // In a real implementation, you would use OpenAI's Realtime API directly
+      alert('Voice Mode в разработке. Пожалуйста, используйте текстовый режим или голосовую запись.');
+      setVoiceModeStatus('disconnected');
       
     } catch (error) {
       console.error('Voice mode connection failed:', error);
@@ -529,6 +521,17 @@ function App() {
                   rows="2"
                 />
                 <div className="input-buttons">
+                  <button
+                    className={`voice-btn ${isRecording ? 'recording' : ''}`}
+                    onMouseDown={startRecording}
+                    onMouseUp={stopRecording}
+                    onTouchStart={startRecording}
+                    onTouchEnd={stopRecording}
+                    disabled={isLoading || isTranscribing}
+                    title="Удерживайте для записи голоса"
+                  >
+                    {isRecording ? '🔴' : '🎤'}
+                  </button>
                   <button
                     className="send-btn"
                     onClick={() => sendMessage()}
