@@ -13,7 +13,8 @@ class RealtimeAudioChat {
     instructions,
   }) {
     this.websocket = null;
-    this.audioElement = null;
+    this.playbackContext = null;
+    this.playbackTime = 0;
     this.websocketUrl = null;
     this.sessionModel = model || "gpt-4o-realtime-preview-latest";
     this.backendUrl = backendUrl;
@@ -22,8 +23,15 @@ class RealtimeAudioChat {
     this.onStatusChange = null;
     this.onError = null;
     this.localStream = null;
-    this.mediaRecorder = null;
+    this.audioContext = null;
+    this.inputSource = null;
+    this.processorNode = null;
     this.isRecording = false;
+    this.clientSecret = null;
+    this.pendingCommit = false;
+    this.lastAudioTimestamp = 0;
+    this.commitTimer = null;
+    this.silenceThreshold = 0.01;
   }
 
   async init() {
@@ -48,22 +56,26 @@ class RealtimeAudioChat {
       }
       
       const data = await tokenResponse.json();
-      if (!data.websocket_url) {
-        throw new Error("Failed to get WebSocket URL");
+      const clientSecret =
+        (data.client_secret && data.client_secret.value) ||
+        data.client_secret_value;
+      if (!data.websocket_url || !clientSecret) {
+        throw new Error("Failed to get Voice Mode credentials");
       }
-      
+
       this.websocketUrl = data.websocket_url;
       this.sessionModel = data.model || this.sessionModel;
       this.instructions = data.instructions || this.instructions;
+      this.clientSecret = clientSecret;
 
       console.log('Voice Mode session created successfully');
 
-      // Setup audio element for playback
-      this.setupAudioElement();
-      
+      // Setup audio playback context
+      this.setupPlaybackContext();
+
       // Setup microphone access
       await this.setupLocalAudio();
-      
+
       // Connect to WebSocket
       await this.connectWebSocket();
 
@@ -80,12 +92,16 @@ class RealtimeAudioChat {
     }
   }
 
-  setupAudioElement() {
-    if (!this.audioElement) {
-      this.audioElement = document.createElement("audio");
-      this.audioElement.autoplay = true;
-      this.audioElement.playsInline = true;
-      document.body.appendChild(this.audioElement);
+  setupPlaybackContext() {
+    if (!this.playbackContext) {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      try {
+        this.playbackContext = new AudioContextClass({ sampleRate: 24000 });
+      } catch (error) {
+        console.warn('Falling back to default AudioContext sampleRate:', error);
+        this.playbackContext = new AudioContextClass();
+      }
+      this.playbackTime = 0;
     }
   }
 
@@ -103,27 +119,64 @@ class RealtimeAudioChat {
       throw new Error('Не удалось получить доступ к микрофону');
     }
 
-    // Setup MediaRecorder for audio capture
-    this.mediaRecorder = new MediaRecorder(this.localStream, {
-      mimeType: 'audio/webm;codecs=opus'
-    });
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    this.audioContext = new AudioContextClass();
+    await this.audioContext.resume();
 
-    this.mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0 && this.websocket && this.websocket.readyState === WebSocket.OPEN) {
-        // Send audio data to WebSocket
-        this.websocket.send(event.data);
+    this.inputSource = this.audioContext.createMediaStreamSource(this.localStream);
+    this.processorNode = this.audioContext.createScriptProcessor(4096, 1, 1);
+
+    const gainNode = this.audioContext.createGain();
+    gainNode.gain.value = 0;
+
+    this.processorNode.onaudioprocess = (event) => {
+      if (!this.isRecording || !this.websocket || this.websocket.readyState !== WebSocket.OPEN) {
+        return;
       }
+
+      const inputBuffer = event.inputBuffer;
+      const channelData = inputBuffer.getChannelData(0);
+      const rms = this.calculateRMS(channelData);
+
+      if (rms < this.silenceThreshold) {
+        return;
+      }
+
+      const downsampled = this.downsampleBuffer(channelData, inputBuffer.sampleRate, 24000);
+      if (!downsampled.length) {
+        return;
+      }
+
+      const pcm = this.floatTo16BitPCM(downsampled);
+      const base64Audio = this.arrayBufferToBase64(pcm.buffer);
+
+      this.websocket.send(JSON.stringify({
+        type: 'input_audio_buffer.append',
+        audio: base64Audio,
+      }));
+
+      this.lastAudioTimestamp = Date.now();
+      this.pendingCommit = true;
     };
+
+    this.inputSource.connect(this.processorNode);
+    this.processorNode.connect(gainNode);
+    gainNode.connect(this.audioContext.destination);
   }
 
   async connectWebSocket() {
     return new Promise((resolve, reject) => {
       try {
-        this.websocket = new WebSocket(this.websocketUrl);
-        
+        const protocols = [
+          'realtime',
+          `openai-insecure-api-key.${this.clientSecret}`,
+          'openai-beta.realtime-v1'
+        ];
+        this.websocket = new WebSocket(this.websocketUrl, protocols);
+
         this.websocket.onopen = () => {
           console.log('WebSocket connected to Realtime API');
-          
+
           // Send session configuration
           this.websocket.send(JSON.stringify({
             type: 'session.update',
@@ -136,7 +189,7 @@ class RealtimeAudioChat {
 
           // Start audio recording
           this.startRecording();
-          
+
           resolve();
         };
 
@@ -162,6 +215,7 @@ class RealtimeAudioChat {
           if (this.onStatusChange) {
             this.onStatusChange('disconnected');
           }
+          this.stopRecording();
         };
 
       } catch (error) {
@@ -172,23 +226,24 @@ class RealtimeAudioChat {
 
   handleWebSocketMessage(data) {
     console.log('Received WebSocket message:', data);
-    
+
     switch (data.type) {
       case 'response.audio.delta':
-        // Handle audio response
-        if (data.delta && this.audioElement) {
-          // Convert base64 audio to blob and play
-          const audioBlob = this.base64ToBlob(data.delta, 'audio/mpeg');
-          const audioUrl = URL.createObjectURL(audioBlob);
-          this.audioElement.src = audioUrl;
-          this.audioElement.play();
+        if (data.delta) {
+          this.playbackAudioDelta(data.delta);
         }
         break;
-        
+
       case 'response.done':
         console.log('Response completed');
         break;
-        
+
+      case 'response.error':
+        if (data.error) {
+          console.error('Realtime API response error:', data.error);
+        }
+        break;
+
       case 'error':
         console.error('Realtime API error:', data.error);
         if (this.onError) {
@@ -202,29 +257,157 @@ class RealtimeAudioChat {
   }
 
   startRecording() {
-    if (this.mediaRecorder && this.mediaRecorder.state === 'inactive') {
-      this.mediaRecorder.start(100); // Send data every 100ms
-      this.isRecording = true;
-      console.log('Started recording');
+    if (this.isRecording) {
+      return;
+    }
+
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      this.audioContext.resume().catch((error) => {
+        console.error('Failed to resume audio context:', error);
+      });
+    }
+
+    this.isRecording = true;
+    this.lastAudioTimestamp = Date.now();
+    console.log('Started realtime audio streaming');
+
+    if (!this.commitTimer) {
+      this.commitTimer = window.setInterval(() => {
+        if (
+          this.pendingCommit &&
+          Date.now() - this.lastAudioTimestamp > 600 &&
+          this.websocket &&
+          this.websocket.readyState === WebSocket.OPEN
+        ) {
+          this.websocket.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+          this.websocket.send(JSON.stringify({ type: 'response.create' }));
+          this.pendingCommit = false;
+        }
+      }, 300);
+    }
+
+    if (this.onStatusChange) {
+      this.onStatusChange('ready');
     }
   }
 
   stopRecording() {
-    if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
-      this.mediaRecorder.stop();
-      this.isRecording = false;
-      console.log('Stopped recording');
+    if (!this.isRecording) {
+      return;
+    }
+
+    this.isRecording = false;
+    this.pendingCommit = false;
+    console.log('Stopped realtime audio streaming');
+
+    if (this.commitTimer) {
+      clearInterval(this.commitTimer);
+      this.commitTimer = null;
+    }
+
+    if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+      this.websocket.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+      this.websocket.send(JSON.stringify({ type: 'response.create' }));
     }
   }
 
-  base64ToBlob(base64, mimeType) {
-    const byteCharacters = atob(base64);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
+  calculateRMS(buffer) {
+    let sum = 0;
+    for (let i = 0; i < buffer.length; i++) {
+      sum += buffer[i] * buffer[i];
     }
-    const byteArray = new Uint8Array(byteNumbers);
-    return new Blob([byteArray], { type: mimeType });
+    return Math.sqrt(sum / buffer.length);
+  }
+
+  downsampleBuffer(buffer, sampleRate, outSampleRate) {
+    if (outSampleRate === sampleRate) {
+      return buffer;
+    }
+
+    const sampleRateRatio = sampleRate / outSampleRate;
+    const newLength = Math.round(buffer.length / sampleRateRatio);
+    const result = new Float32Array(newLength);
+    let offsetResult = 0;
+    let offsetBuffer = 0;
+
+    while (offsetResult < result.length) {
+      const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+      let accum = 0;
+      let count = 0;
+      for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+        accum += buffer[i];
+        count++;
+      }
+      result[offsetResult] = accum / (count || 1);
+      offsetResult++;
+      offsetBuffer = nextOffsetBuffer;
+    }
+
+    return result;
+  }
+
+  floatTo16BitPCM(buffer) {
+    const length = buffer.length;
+    const result = new Int16Array(length);
+    for (let i = 0; i < length; i++) {
+      const s = Math.max(-1, Math.min(1, buffer[i]));
+      result[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    return result;
+  }
+
+  arrayBufferToBase64(buffer) {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode.apply(null, chunk);
+    }
+    return btoa(binary);
+  }
+
+  base64ToInt16(base64) {
+    const binary = atob(base64);
+    const buffer = new ArrayBuffer(binary.length);
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Int16Array(buffer);
+  }
+
+  playbackAudioDelta(base64Audio) {
+    if (!this.playbackContext) {
+      return;
+    }
+
+    if (this.playbackContext.state === 'suspended') {
+      this.playbackContext.resume().catch((error) => {
+        console.warn('Failed to resume playback context:', error);
+      });
+    }
+
+    const int16Array = this.base64ToInt16(base64Audio);
+    if (!int16Array.length) {
+      return;
+    }
+
+    const floatArray = new Float32Array(int16Array.length);
+    for (let i = 0; i < int16Array.length; i++) {
+      floatArray[i] = int16Array[i] / 0x8000;
+    }
+
+    const audioBuffer = this.playbackContext.createBuffer(1, floatArray.length, 24000);
+    audioBuffer.copyToChannel(floatArray, 0);
+
+    const source = this.playbackContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(this.playbackContext.destination);
+
+    const startAt = Math.max(this.playbackContext.currentTime, this.playbackTime);
+    source.start(startAt);
+    this.playbackTime = startAt + audioBuffer.duration;
   }
 
 
@@ -244,12 +427,27 @@ class RealtimeAudioChat {
       this.localStream = null;
     }
 
-    // Remove audio element
-    if (this.audioElement) {
-      document.body.removeChild(this.audioElement);
-      this.audioElement = null;
+    if (this.processorNode) {
+      this.processorNode.disconnect();
+      this.processorNode = null;
     }
-    
+
+    if (this.inputSource) {
+      this.inputSource.disconnect();
+      this.inputSource = null;
+    }
+
+    if (this.audioContext) {
+      this.audioContext.close().catch(() => {});
+      this.audioContext = null;
+    }
+
+    if (this.playbackContext) {
+      this.playbackContext.close().catch(() => {});
+      this.playbackContext = null;
+      this.playbackTime = 0;
+    }
+
     if (this.onStatusChange) {
       this.onStatusChange('disconnected');
     }
