@@ -102,7 +102,7 @@ def _default_chat_model() -> str:
 
 def _default_voice_model() -> str:
     # Используем актуальную модель Realtime API
-    return os.getenv("OPENAI_VOICE_MODEL", "gpt-4o-realtime-preview-2024-12-17")
+    return os.getenv("OPENAI_VOICE_MODEL", "gpt-4o-realtime-preview-latest")
 
 
 def _default_voice_name() -> str:

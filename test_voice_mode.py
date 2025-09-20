@@ -18,7 +18,7 @@ def test_voice_session_creation():
         print("🧪 Тестирование создания Voice Mode сессии...")
         
         payload = {
-            "model": "gpt-4o-realtime-preview-2024-12-17",
+            "model": "gpt-4o-realtime-preview-latest",
             "voice": "verse",
             "instructions": "Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года."
         }
@@ -66,7 +66,7 @@ def test_voice_session_with_region_error():
         print("\n🧪 Тестирование обработки ошибки региона...")
         
         payload = {
-            "model": "gpt-4o-realtime-preview-2024-12-17",
+            "model": "gpt-4o-realtime-preview-latest",
             "voice": "verse"
         }
         
