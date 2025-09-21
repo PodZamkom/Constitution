@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, APIRouter, Request
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, APIRouter, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +15,7 @@ import tempfile
 import logging
 import asyncio
 import base64
+import httpx
 
 load_dotenv()
 
@@ -85,6 +86,7 @@ class VoiceSessionRequest(BaseModel):
 class VoiceSessionResponse(BaseModel):
     session_id: str
     client_secret: str
+    model: str
 
 # System prompt for Belarus Constitution AI
 SYSTEM_PROMPT = """Ты - Алеся, эксперт по Конституции Республики Беларусь редакции 2022 года. 
@@ -100,19 +102,28 @@ SYSTEM_PROMPT = """Ты - Алеся, эксперт по Конституции
 # OpenAI integration
 try:
     from openai import OpenAI
-    INTEGRATION_AVAILABLE = True
-    VOICE_MODE_AVAILABLE = True
     logger.info("OpenAI integration available")
+    _openai_imported = True
 except ImportError as e:
-    INTEGRATION_AVAILABLE = False
-    VOICE_MODE_AVAILABLE = False
     logger.warning(f"OpenAI not available: {e}")
+    OpenAI = None  # type: ignore
+    _openai_imported = False
+
+api_key_configured = bool(os.environ.get("OPENAI_API_KEY"))
+
+INTEGRATION_AVAILABLE = _openai_imported and api_key_configured
+VOICE_MODE_AVAILABLE = INTEGRATION_AVAILABLE
+
+if not api_key_configured:
+    logger.warning("OPENAI_API_KEY is not configured; OpenAI features are disabled")
 
 def get_openai_client():
     """Get OpenAI client with API key validation"""
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+    if not _openai_imported or OpenAI is None:
+        raise HTTPException(status_code=500, detail="OpenAI SDK not available")
     return OpenAI(api_key=api_key)
 
 @app.get("/")
@@ -234,12 +245,20 @@ async def create_voice_session(request: VoiceSessionRequest):
         session = client.beta.realtime.sessions.create(
             model=request.model,
             voice=request.voice,
-            instructions="Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
+            instructions=(
+                "Ты — Алеся, виртуальный консультант по Конституции Республики Беларусь редакции 2022 года. "
+                "Отвечай только на вопросы по Конституции, всегда указывай номер статьи и пункта. "
+                "Если вопрос не относится к Конституции — вежливо откажись и предложи задать вопрос по Конституции."
+            ),
+            modalities=["audio", "text"]
         )
-        
+
+        session_model = getattr(session, "model", request.model)
+
         return VoiceSessionResponse(
             session_id=session.id,
-            client_secret=session.client_secret.value
+            client_secret=session.client_secret.value,
+            model=session_model
         )
     except HTTPException:
         raise
@@ -298,13 +317,37 @@ async def negotiate_webrtc(request: Request):
         
         # Get SDP offer from request body
         sdp_offer = await request.body()
-        
-        client = get_openai_client()
-        
-        # For now, return a simple response - WebRTC negotiation will be handled client-side
-        # The client will use the client_secret directly with OpenAI's WebRTC API
-        return {"sdp": "WebRTC negotiation handled client-side", "client_secret": client_secret}
+        if not sdp_offer:
+            raise HTTPException(status_code=400, detail="Missing SDP offer")
+
+        # Negotiate with OpenAI Realtime API and return SDP answer
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as http_client:
+            negotiate_response = await http_client.post(
+                "https://api.openai.com/v1/realtime",
+                params={"model": model},
+                headers={
+                    "Authorization": f"Bearer {client_secret}",
+                    "Content-Type": "application/sdp",
+                    "Accept": "application/sdp"
+                },
+                content=sdp_offer
+            )
+
+        if negotiate_response.status_code != 200:
+            logger.error(
+                "WebRTC negotiation failed: %s %s",
+                negotiate_response.status_code,
+                negotiate_response.text
+            )
+            raise HTTPException(
+                status_code=negotiate_response.status_code,
+                detail=negotiate_response.text
+            )
+
+        return Response(content=negotiate_response.content, media_type="application/sdp")
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in WebRTC negotiation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
