@@ -53,9 +53,9 @@ class RealtimeAudioChat {
       }
       
       console.log('🎤 [VOICE INIT] Step 2: Initializing RealtimeClient...');
-      // Initialize RealtimeClient with relay server
+      // Initialize RealtimeClient with API key directly
       this.client = new RealtimeClient({ 
-        url: `${BACKEND_URL}/api/voice/realtime/ws`,
+        apiKey: data.client_secret,
         dangerouslyAllowAPIKeyInBrowser: true
       });
       console.log('🎤 [VOICE INIT] RealtimeClient created successfully');
@@ -71,8 +71,7 @@ class RealtimeAudioChat {
         instructions: 'Ты Алеся - AI-ассистент по Конституции Республики Беларусь. Отвечай на вопросы согласно Конституции РБ редакции 2022 года. Говори дружелюбно и профессионально.',
         voice: 'shimmer',
         turn_detection: { type: 'server_vad' },
-        input_audio_transcription: { model: 'whisper-1' },
-        output_audio_format: 'pcm_16000'
+        input_audio_transcription: { model: 'whisper-1' }
       });
       console.log('🎤 [VOICE INIT] Session parameters configured');
 
@@ -135,8 +134,17 @@ class RealtimeAudioChat {
       
       if (item.type === 'message' && item.role === 'assistant') {
         console.log('🎤 [EVENT HANDLERS] 🤖 Assistant message received:', item.content);
-        if (this.onMessage) {
-          this.onMessage(item.content?.[0]?.text || '');
+        if (this.onMessage && item.content?.[0]?.text) {
+          this.onMessage(item.content[0].text);
+        }
+      }
+      
+      // Handle audio delta
+      if (delta && delta.audio) {
+        console.log('🎤 [EVENT HANDLERS] 🔊 Audio delta received:', delta.audio.length, 'samples');
+        // Play audio if we have an audio context
+        if (this.audioContext) {
+          this.playAudio(delta.audio);
         }
       }
     });
@@ -187,8 +195,6 @@ class RealtimeAudioChat {
       // Get user media with proper audio constraints
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          sampleRate: 16000,
-          channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true
@@ -201,9 +207,7 @@ class RealtimeAudioChat {
 
       // Set up AudioContext for processing
       console.log('🎤 [AUDIO SETUP] Creating AudioContext...');
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
-        sampleRate: 16000
-      });
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
       
       console.log('🎤 [AUDIO SETUP] AudioContext state:', this.audioContext.state);
       console.log('🎤 [AUDIO SETUP] AudioContext sample rate:', this.audioContext.sampleRate);
@@ -222,7 +226,7 @@ class RealtimeAudioChat {
           const inputBuffer = event.inputBuffer;
           const inputData = inputBuffer.getChannelData(0);
           
-          // Convert Float32Array to Int16Array
+          // Convert Float32Array to Int16Array for OpenAI Realtime API
           const int16Data = new Int16Array(inputData.length);
           for (let i = 0; i < inputData.length; i++) {
             int16Data[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
@@ -315,6 +319,33 @@ class RealtimeAudioChat {
       }
     } else {
       console.warn('🎤 [VOICE ACTIONS] ⚠️ Cannot stop response - client not connected');
+    }
+  }
+
+  // Play audio from OpenAI
+  playAudio(audioData) {
+    try {
+      console.log('🎤 [AUDIO PLAY] Playing audio:', audioData.length, 'samples');
+      
+      // Convert Int16Array to Float32Array
+      const floatData = new Float32Array(audioData.length);
+      for (let i = 0; i < audioData.length; i++) {
+        floatData[i] = audioData[i] / 32768.0;
+      }
+      
+      // Create audio buffer
+      const audioBuffer = this.audioContext.createBuffer(1, floatData.length, 24000);
+      audioBuffer.copyToChannel(floatData, 0);
+      
+      // Create audio source and play
+      const source = this.audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(this.audioContext.destination);
+      source.start();
+      
+      console.log('🎤 [AUDIO PLAY] ✅ Audio playing');
+    } catch (error) {
+      console.error('🎤 [AUDIO PLAY] ❌ Error playing audio:', error);
     }
   }
   
