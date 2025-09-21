@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, APIRouter, Request
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +15,7 @@ import tempfile
 import logging
 import asyncio
 import base64
+import websockets
 
 load_dotenv()
 
@@ -308,6 +309,76 @@ async def negotiate_webrtc(request: Request):
     except Exception as e:
         logger.error(f"Error in WebRTC negotiation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.websocket("/api/voice/realtime/ws")
+async def websocket_realtime(websocket: WebSocket):
+    """
+    WebSocket endpoint for OpenAI Realtime API relay
+    """
+    await websocket.accept()
+    
+    try:
+        # Get OpenAI API key
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            await websocket.close(code=1008, reason="OpenAI API key not configured")
+            return
+        
+        # Connect to OpenAI Realtime API
+        openai_ws_url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        
+        async with websockets.connect(openai_ws_url, extra_headers=headers) as openai_ws:
+            logger.info("Connected to OpenAI Realtime API")
+            
+            # Send session configuration
+            session_config = {
+                "type": "session.update",
+                "session": {
+                    "modalities": ["text", "audio"],
+                    "instructions": "Ты Алеся - AI-ассистент по Конституции Республики Беларусь. Отвечай на вопросы согласно Конституции РБ редакции 2022 года. Говори дружелюбно и профессионально.",
+                    "voice": "shimmer",
+                    "turn_detection": {"type": "server_vad"},
+                    "input_audio_format": "pcm16",
+                    "output_audio_format": "pcm16",
+                    "input_audio_transcription": {"model": "whisper-1"}
+                }
+            }
+            await openai_ws.send(json.dumps(session_config))
+            
+            # Relay messages between client and OpenAI
+            async def relay_messages():
+                try:
+                    while True:
+                        message = await websocket.receive_text()
+                        await openai_ws.send(message)
+                except WebSocketDisconnect:
+                    logger.info("Client disconnected")
+                except Exception as e:
+                    logger.error(f"Error relaying client message: {e}")
+            
+            async def relay_openai_messages():
+                try:
+                    while True:
+                        message = await openai_ws.recv()
+                        await websocket.send_text(message)
+                except websockets.exceptions.ConnectionClosed:
+                    logger.info("OpenAI connection closed")
+                except Exception as e:
+                    logger.error(f"Error relaying OpenAI message: {e}")
+            
+            # Run both relay functions concurrently
+            await asyncio.gather(
+                relay_messages(),
+                relay_openai_messages()
+            )
+            
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        try:
+            await websocket.close(code=1011, reason="Internal server error")
+        except:
+            pass
 
 # Streaming chat endpoint
 @app.post("/api/chat/stream")

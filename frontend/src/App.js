@@ -1,18 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
+import { RealtimeClient } from '@openai/realtime-api-beta';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
 
-// Voice Mode WebRTC Class
+// Voice Mode RealtimeClient Class
 class RealtimeAudioChat {
   constructor() {
-    this.peerConnection = null;
-    this.dataChannel = null;
-    this.audioElement = null;
-    this.sessionToken = null;
-    this.sessionModel = "gpt-4o-realtime-preview-2024-12-17";
+    this.client = null;
+    this.audioContext = null;
+    this.audioWorkletNode = null;
+    this.mediaStream = null;
     this.onStatusChange = null;
     this.onError = null;
+    this.onMessage = null;
+    this.isConnected = false;
   }
 
   async init() {
@@ -40,46 +42,32 @@ class RealtimeAudioChat {
         throw new Error("Failed to get session token");
       }
       
-      // Save client_secret and model for subsequent negotiation
-      this.sessionToken = data.client_secret;
-      this.sessionModel = data.model || this.sessionModel;
-
-      console.log('Voice Mode session created successfully');
-
-      // Create and set up WebRTC peer connection
-      this.peerConnection = new RTCPeerConnection();
-      this.setupAudioElement();
-      await this.setupLocalAudio();
-      this.setupDataChannel();
-
-      // Create and send offer
-      const offer = await this.peerConnection.createOffer();
-      await this.peerConnection.setLocalDescription(offer);
-
-      // Send offer to backend and get answer
-      const response = await fetch(`${BACKEND_URL}/api/voice/realtime/negotiate`, {
-        method: "POST",
-        body: offer.sdp,
-        headers: {
-          "Content-Type": "application/sdp",
-          // Pass client_secret so backend can negotiate with OpenAI Realtime session
-          "Authorization": `Bearer ${this.sessionToken}`,
-          "X-OpenAI-Model": this.sessionModel
-        }
+      // Initialize RealtimeClient with relay server
+      this.client = new RealtimeClient({ 
+        url: `${BACKEND_URL}/api/voice/realtime/ws`,
+        dangerouslyAllowAPIKeyInBrowser: true
       });
+
+      // Set up event handlers
+      this.setupEventHandlers();
+
+      // Configure session parameters
+      this.client.updateSession({
+        instructions: 'Ты Алеся - AI-ассистент по Конституции Республики Беларусь. Отвечай на вопросы согласно Конституции РБ редакции 2022 года. Говори дружелюбно и профессионально.',
+        voice: 'shimmer',
+        turn_detection: { type: 'server_vad' },
+        input_audio_transcription: { model: 'whisper-1' },
+        output_audio_format: 'pcm_16000'
+      });
+
+      // Connect to Realtime API
+      await this.client.connect();
       
-      if (!response.ok) {
-        throw new Error(`Negotiation failed: ${response.status}`);
-      }
-
-      const { sdp: answerSdp } = await response.json();
-      const answer = {
-        type: "answer",
-        sdp: answerSdp
-      };
-
-      await this.peerConnection.setRemoteDescription(answer);
-      console.log("WebRTC connection established for Алеся Voice Mode");
+      // Set up audio processing
+      await this.setupAudioProcessing();
+      
+      this.isConnected = true;
+      console.log("Voice Mode connected successfully for Алеся");
       
       if (this.onStatusChange) {
         this.onStatusChange('connected');
@@ -94,66 +82,134 @@ class RealtimeAudioChat {
     }
   }
 
-  setupAudioElement() {
-    if (!this.audioElement) {
-      this.audioElement = document.createElement("audio");
-      this.audioElement.autoplay = true;
-      document.body.appendChild(this.audioElement);
+  setupEventHandlers() {
+    // Handle errors
+    this.client.on('error', (event) => {
+      console.error('RealtimeClient error:', event);
+      if (this.onError) {
+        this.onError(event.error?.message || 'Connection error');
+      }
+    });
+
+    // Handle conversation updates
+    this.client.on('conversation.updated', ({ item, delta }) => {
+      console.log('Conversation updated:', item, delta);
+      
+      if (item.type === 'message' && item.role === 'assistant') {
+        if (this.onMessage) {
+          this.onMessage(item.content?.[0]?.text || '');
+        }
+      }
+    });
+
+    // Handle conversation interruption
+    this.client.on('conversation.interrupted', () => {
+      console.log('Conversation interrupted by user');
+    });
+
+    // Handle item completion
+    this.client.on('conversation.item.completed', ({ item }) => {
+      if (item.type === 'message' && item.role === 'assistant') {
+        console.log('Assistant message completed');
+        if (this.onStatusChange) {
+          this.onStatusChange('ready');
+        }
+      }
+    });
+  }
+
+  async setupAudioProcessing() {
+    try {
+      // Get user media with proper audio constraints
+      this.mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+
+      // Set up AudioContext for processing
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+        sampleRate: 16000
+      });
+
+      // Create audio source from microphone
+      const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+      
+      // Create ScriptProcessorNode for audio processing
+      const processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+      
+      processor.onaudioprocess = (event) => {
+        if (this.isConnected && this.client) {
+          const inputBuffer = event.inputBuffer;
+          const inputData = inputBuffer.getChannelData(0);
+          
+          // Convert Float32Array to Int16Array
+          const int16Data = new Int16Array(inputData.length);
+          for (let i = 0; i < inputData.length; i++) {
+            int16Data[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
+          }
+          
+          // Send audio data to Realtime API
+          this.client.appendInputAudio(int16Data);
+        }
+      };
+      
+      source.connect(processor);
+      processor.connect(this.audioContext.destination);
+      
+      console.log('Audio processing setup complete');
+      
+    } catch (error) {
+      console.error('Error setting up audio processing:', error);
+      throw error;
     }
-
-    this.peerConnection.ontrack = (event) => {
-      this.audioElement.srcObject = event.streams[0];
-    };
   }
 
-  async setupLocalAudio() {
-    const stream = await navigator.mediaDevices.getUserMedia({ 
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    });
-    
-    stream.getTracks().forEach(track => {
-      this.peerConnection.addTrack(track, stream);
-    });
+  // Send a text message
+  sendMessage(text) {
+    if (this.client && this.isConnected) {
+      this.client.sendUserMessageContent([{ type: 'input_text', text: text }]);
+    }
   }
 
-  setupDataChannel() {
-    this.dataChannel = this.peerConnection.createDataChannel("oai-events");
-    this.dataChannel.onmessage = (event) => {
-      console.log("Received event:", event.data);
-      // Handle different event types here
-    };
-    
-    this.dataChannel.onopen = () => {
-      console.log("Data channel opened");
-      if (this.onStatusChange) {
-        this.onStatusChange('ready');
+  // Start listening (trigger response)
+  startListening() {
+    if (this.client && this.isConnected) {
+      this.client.createResponse();
+    }
+  }
+
+  // Stop current response
+  stopResponse() {
+    if (this.client && this.isConnected) {
+      const items = this.client.conversation.getItems();
+      const currentItem = items[items.length - 1];
+      if (currentItem && currentItem.status === 'in_progress') {
+        this.client.cancelResponse(currentItem.id, 0);
       }
-    };
-    
-    this.dataChannel.onclose = () => {
-      console.log("Data channel closed");
-      if (this.onStatusChange) {
-        this.onStatusChange('disconnected');
-      }
-    };
+    }
   }
   
   disconnect() {
-    if (this.dataChannel) {
-      this.dataChannel.close();
+    this.isConnected = false;
+    
+    if (this.mediaStream) {
+      this.mediaStream.getTracks().forEach(track => track.stop());
+      this.mediaStream = null;
     }
     
-    if (this.peerConnection) {
-      this.peerConnection.close();
+    if (this.audioContext) {
+      this.audioContext.close();
+      this.audioContext = null;
     }
     
-    if (this.audioElement) {
-      document.body.removeChild(this.audioElement);
-      this.audioElement = null;
+    if (this.client) {
+      this.client.disconnect();
+      this.client = null;
     }
     
     if (this.onStatusChange) {
@@ -385,14 +441,39 @@ function App() {
     setVoiceModeStatus('connecting');
     
     try {
-      // For now, we'll use a simplified approach
-      // In a real implementation, you would use OpenAI's Realtime API directly
-      alert('Voice Mode в разработке. Пожалуйста, используйте текстовый режим или голосовую запись.');
-      setVoiceModeStatus('disconnected');
+      const voiceChat = new RealtimeAudioChat();
+      
+      // Set up event handlers
+      voiceChat.onStatusChange = (status) => {
+        setVoiceModeStatus(status);
+        if (status === 'connected') {
+          setVoiceChat(voiceChat);
+        }
+      };
+      
+      voiceChat.onError = (error) => {
+        console.error('Voice mode error:', error);
+        alert(`Ошибка голосового режима: ${error}`);
+        setVoiceModeStatus('disconnected');
+      };
+      
+      voiceChat.onMessage = (text) => {
+        // Add assistant message to chat
+        const assistantMessage = {
+          id: Date.now().toString(),
+          content: text,
+          role: 'assistant',
+          timestamp: new Date().toISOString()
+        };
+        setMessages(prev => [...prev, assistantMessage]);
+      };
+      
+      // Initialize voice chat
+      await voiceChat.init();
       
     } catch (error) {
       console.error('Voice mode connection failed:', error);
-      alert('Не удалось подключиться к Voice Mode. Попробуйте еще раз.');
+      alert(`Не удалось подключиться к Voice Mode: ${error.message}`);
       setVoiceModeStatus('disconnected');
     }
   };
@@ -583,14 +664,30 @@ function App() {
                   <div className="voice-indicator">
                     🎤 <strong>Говорите!</strong> Я слушаю...
                   </div>
-                  <button 
-                    className="voice-disconnect-btn"
-                    onClick={disconnectVoiceMode}
-                  >
-                    Завершить разговор
-                  </button>
+                  <div className="voice-controls">
+                    <button 
+                      className="voice-listen-btn"
+                      onClick={() => voiceChat?.startListening()}
+                      disabled={voiceModeStatus !== 'ready'}
+                    >
+                      {voiceModeStatus === 'ready' ? '🎤 Начать разговор' : '⏳ Обработка...'}
+                    </button>
+                    <button 
+                      className="voice-stop-btn"
+                      onClick={() => voiceChat?.stopResponse()}
+                      disabled={voiceModeStatus === 'ready'}
+                    >
+                      ⏹️ Остановить
+                    </button>
+                    <button 
+                      className="voice-disconnect-btn"
+                      onClick={disconnectVoiceMode}
+                    >
+                      ❌ Завершить разговор
+                    </button>
+                  </div>
                   <p className="voice-hint">
-                    💡 Вы можете перебивать меня в любой момент
+                    💡 Говорите естественно - я буду отвечать голосом
                   </p>
                 </div>
               )}
