@@ -19,9 +19,11 @@ class RealtimeAudioChat {
 
   async init() {
     try {
-      console.log('Initializing Voice Mode for Алеся...');
+      console.log('🎤 [VOICE INIT] Starting Voice Mode initialization for Алеся...');
+      console.log('🎤 [VOICE INIT] Backend URL:', BACKEND_URL);
       
-      // Get session from backend
+      // Step 1: Get session from backend
+      console.log('🎤 [VOICE INIT] Step 1: Requesting session from backend...');
       const tokenResponse = await fetch(`${BACKEND_URL}/api/voice/realtime/session`, {
         method: "POST",
         headers: {
@@ -33,25 +35,38 @@ class RealtimeAudioChat {
         })
       });
       
+      console.log('🎤 [VOICE INIT] Session response status:', tokenResponse.status);
+      console.log('🎤 [VOICE INIT] Session response headers:', Object.fromEntries(tokenResponse.headers.entries()));
+      
       if (!tokenResponse.ok) {
-        throw new Error(`Session request failed: ${tokenResponse.status}`);
+        const errorText = await tokenResponse.text();
+        console.error('🎤 [VOICE INIT] Session request failed:', errorText);
+        throw new Error(`Session request failed: ${tokenResponse.status} - ${errorText}`);
       }
       
       const data = await tokenResponse.json();
+      console.log('🎤 [VOICE INIT] Session data received:', data);
+      
       if (!data.client_secret) {
+        console.error('🎤 [VOICE INIT] No client_secret in response:', data);
         throw new Error("Failed to get session token");
       }
       
+      console.log('🎤 [VOICE INIT] Step 2: Initializing RealtimeClient...');
       // Initialize RealtimeClient with relay server
       this.client = new RealtimeClient({ 
         url: `${BACKEND_URL}/api/voice/realtime/ws`,
         dangerouslyAllowAPIKeyInBrowser: true
       });
+      console.log('🎤 [VOICE INIT] RealtimeClient created successfully');
 
       // Set up event handlers
+      console.log('🎤 [VOICE INIT] Step 3: Setting up event handlers...');
       this.setupEventHandlers();
+      console.log('🎤 [VOICE INIT] Event handlers set up');
 
       // Configure session parameters
+      console.log('🎤 [VOICE INIT] Step 4: Configuring session parameters...');
       this.client.updateSession({
         instructions: 'Ты Алеся - AI-ассистент по Конституции Республики Беларусь. Отвечай на вопросы согласно Конституции РБ редакции 2022 года. Говори дружелюбно и профессионально.',
         voice: 'shimmer',
@@ -59,22 +74,32 @@ class RealtimeAudioChat {
         input_audio_transcription: { model: 'whisper-1' },
         output_audio_format: 'pcm_16000'
       });
+      console.log('🎤 [VOICE INIT] Session parameters configured');
 
       // Connect to Realtime API
+      console.log('🎤 [VOICE INIT] Step 5: Connecting to Realtime API...');
       await this.client.connect();
+      console.log('🎤 [VOICE INIT] Connected to Realtime API successfully');
       
       // Set up audio processing
+      console.log('🎤 [VOICE INIT] Step 6: Setting up audio processing...');
       await this.setupAudioProcessing();
+      console.log('🎤 [VOICE INIT] Audio processing set up successfully');
       
       this.isConnected = true;
-      console.log("Voice Mode connected successfully for Алеся");
+      console.log('🎤 [VOICE INIT] ✅ Voice Mode connected successfully for Алеся');
       
       if (this.onStatusChange) {
         this.onStatusChange('connected');
       }
       
     } catch (error) {
-      console.error("Failed to initialize Алеся audio chat:", error);
+      console.error("🎤 [VOICE INIT] ❌ Failed to initialize Алеся audio chat:", error);
+      console.error("🎤 [VOICE INIT] Error details:", {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
       if (this.onError) {
         this.onError(error.message);
       }
@@ -83,9 +108,16 @@ class RealtimeAudioChat {
   }
 
   setupEventHandlers() {
+    console.log('🎤 [EVENT HANDLERS] Setting up event handlers...');
+    
     // Handle errors
     this.client.on('error', (event) => {
-      console.error('RealtimeClient error:', event);
+      console.error('🎤 [EVENT HANDLERS] ❌ RealtimeClient error:', event);
+      console.error('🎤 [EVENT HANDLERS] Error details:', {
+        type: event.type,
+        error: event.error,
+        message: event.message
+      });
       if (this.onError) {
         this.onError(event.error?.message || 'Connection error');
       }
@@ -93,9 +125,16 @@ class RealtimeAudioChat {
 
     // Handle conversation updates
     this.client.on('conversation.updated', ({ item, delta }) => {
-      console.log('Conversation updated:', item, delta);
+      console.log('🎤 [EVENT HANDLERS] 📝 Conversation updated:', {
+        itemType: item.type,
+        itemRole: item.role,
+        itemStatus: item.status,
+        hasDelta: !!delta,
+        deltaType: delta ? Object.keys(delta) : null
+      });
       
       if (item.type === 'message' && item.role === 'assistant') {
+        console.log('🎤 [EVENT HANDLERS] 🤖 Assistant message received:', item.content);
         if (this.onMessage) {
           this.onMessage(item.content?.[0]?.text || '');
         }
@@ -104,22 +143,47 @@ class RealtimeAudioChat {
 
     // Handle conversation interruption
     this.client.on('conversation.interrupted', () => {
-      console.log('Conversation interrupted by user');
+      console.log('🎤 [EVENT HANDLERS] ⏸️ Conversation interrupted by user');
     });
 
     // Handle item completion
     this.client.on('conversation.item.completed', ({ item }) => {
+      console.log('🎤 [EVENT HANDLERS] ✅ Item completed:', {
+        type: item.type,
+        role: item.role,
+        status: item.status
+      });
       if (item.type === 'message' && item.role === 'assistant') {
-        console.log('Assistant message completed');
+        console.log('🎤 [EVENT HANDLERS] 🤖 Assistant message completed');
         if (this.onStatusChange) {
           this.onStatusChange('ready');
         }
       }
     });
+
+    // Handle realtime events
+    this.client.on('realtime.event', ({ time, source, event }) => {
+      console.log('🎤 [EVENT HANDLERS] 🔄 Realtime event:', {
+        time,
+        source,
+        eventType: event.type,
+        event: event
+      });
+    });
+
+    console.log('🎤 [EVENT HANDLERS] ✅ Event handlers set up successfully');
   }
 
   async setupAudioProcessing() {
     try {
+      console.log('🎤 [AUDIO SETUP] Starting audio processing setup...');
+      
+      // Check if getUserMedia is available
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('getUserMedia is not supported in this browser');
+      }
+      
+      console.log('🎤 [AUDIO SETUP] Requesting microphone access...');
       // Get user media with proper audio constraints
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -130,18 +194,29 @@ class RealtimeAudioChat {
           autoGainControl: true
         }
       });
+      
+      console.log('🎤 [AUDIO SETUP] ✅ Microphone access granted');
+      console.log('🎤 [AUDIO SETUP] Media stream tracks:', this.mediaStream.getTracks().length);
+      console.log('🎤 [AUDIO SETUP] Audio track settings:', this.mediaStream.getAudioTracks()[0]?.getSettings());
 
       // Set up AudioContext for processing
+      console.log('🎤 [AUDIO SETUP] Creating AudioContext...');
       this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
         sampleRate: 16000
       });
+      
+      console.log('🎤 [AUDIO SETUP] AudioContext state:', this.audioContext.state);
+      console.log('🎤 [AUDIO SETUP] AudioContext sample rate:', this.audioContext.sampleRate);
 
       // Create audio source from microphone
+      console.log('🎤 [AUDIO SETUP] Creating audio source...');
       const source = this.audioContext.createMediaStreamSource(this.mediaStream);
       
       // Create ScriptProcessorNode for audio processing
+      console.log('🎤 [AUDIO SETUP] Creating ScriptProcessorNode...');
       const processor = this.audioContext.createScriptProcessor(4096, 1, 1);
       
+      let audioChunkCount = 0;
       processor.onaudioprocess = (event) => {
         if (this.isConnected && this.client) {
           const inputBuffer = event.inputBuffer;
@@ -153,44 +228,93 @@ class RealtimeAudioChat {
             int16Data[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
           }
           
+          // Log every 10th chunk to avoid spam
+          audioChunkCount++;
+          if (audioChunkCount % 10 === 0) {
+            console.log('🎤 [AUDIO PROCESSING] Sending audio chunk #' + audioChunkCount, {
+              dataLength: int16Data.length,
+              sampleRate: inputBuffer.sampleRate,
+              duration: inputBuffer.duration
+            });
+          }
+          
           // Send audio data to Realtime API
-          this.client.appendInputAudio(int16Data);
+          try {
+            this.client.appendInputAudio(int16Data);
+          } catch (error) {
+            console.error('🎤 [AUDIO PROCESSING] Error sending audio:', error);
+          }
         }
       };
       
+      console.log('🎤 [AUDIO SETUP] Connecting audio nodes...');
       source.connect(processor);
       processor.connect(this.audioContext.destination);
       
-      console.log('Audio processing setup complete');
+      console.log('🎤 [AUDIO SETUP] ✅ Audio processing setup complete');
+      console.log('🎤 [AUDIO SETUP] Audio graph connected successfully');
       
     } catch (error) {
-      console.error('Error setting up audio processing:', error);
+      console.error('🎤 [AUDIO SETUP] ❌ Error setting up audio processing:', error);
+      console.error('🎤 [AUDIO SETUP] Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
       throw error;
     }
   }
 
   // Send a text message
   sendMessage(text) {
+    console.log('🎤 [VOICE ACTIONS] 📤 Sending text message:', text);
     if (this.client && this.isConnected) {
-      this.client.sendUserMessageContent([{ type: 'input_text', text: text }]);
+      try {
+        this.client.sendUserMessageContent([{ type: 'input_text', text: text }]);
+        console.log('🎤 [VOICE ACTIONS] ✅ Text message sent successfully');
+      } catch (error) {
+        console.error('🎤 [VOICE ACTIONS] ❌ Error sending text message:', error);
+      }
+    } else {
+      console.warn('🎤 [VOICE ACTIONS] ⚠️ Cannot send message - client not connected');
     }
   }
 
   // Start listening (trigger response)
   startListening() {
+    console.log('🎤 [VOICE ACTIONS] 🎤 Starting listening...');
     if (this.client && this.isConnected) {
-      this.client.createResponse();
+      try {
+        this.client.createResponse();
+        console.log('🎤 [VOICE ACTIONS] ✅ Response creation triggered');
+      } catch (error) {
+        console.error('🎤 [VOICE ACTIONS] ❌ Error starting response:', error);
+      }
+    } else {
+      console.warn('🎤 [VOICE ACTIONS] ⚠️ Cannot start listening - client not connected');
     }
   }
 
   // Stop current response
   stopResponse() {
+    console.log('🎤 [VOICE ACTIONS] ⏹️ Stopping current response...');
     if (this.client && this.isConnected) {
-      const items = this.client.conversation.getItems();
-      const currentItem = items[items.length - 1];
-      if (currentItem && currentItem.status === 'in_progress') {
-        this.client.cancelResponse(currentItem.id, 0);
+      try {
+        const items = this.client.conversation.getItems();
+        console.log('🎤 [VOICE ACTIONS] Current conversation items:', items.length);
+        const currentItem = items[items.length - 1];
+        if (currentItem && currentItem.status === 'in_progress') {
+          console.log('🎤 [VOICE ACTIONS] Cancelling response for item:', currentItem.id);
+          this.client.cancelResponse(currentItem.id, 0);
+          console.log('🎤 [VOICE ACTIONS] ✅ Response cancelled');
+        } else {
+          console.log('🎤 [VOICE ACTIONS] No active response to cancel');
+        }
+      } catch (error) {
+        console.error('🎤 [VOICE ACTIONS] ❌ Error stopping response:', error);
       }
+    } else {
+      console.warn('🎤 [VOICE ACTIONS] ⚠️ Cannot stop response - client not connected');
     }
   }
   
@@ -433,31 +557,41 @@ function App() {
   };
 
   const connectVoiceMode = async () => {
+    console.log('🎤 [CONNECT VOICE] Starting voice mode connection...');
+    console.log('🎤 [CONNECT VOICE] Capabilities:', capabilities);
+    
     if (!capabilities.voice_mode_available) {
+      console.error('🎤 [CONNECT VOICE] ❌ Voice Mode not available');
       alert('Voice Mode недоступен. Проверьте настройки сервера.');
       return;
     }
     
+    console.log('🎤 [CONNECT VOICE] Setting status to connecting...');
     setVoiceModeStatus('connecting');
     
     try {
+      console.log('🎤 [CONNECT VOICE] Creating RealtimeAudioChat instance...');
       const voiceChat = new RealtimeAudioChat();
       
       // Set up event handlers
+      console.log('🎤 [CONNECT VOICE] Setting up event handlers...');
       voiceChat.onStatusChange = (status) => {
+        console.log('🎤 [CONNECT VOICE] Status changed:', status);
         setVoiceModeStatus(status);
         if (status === 'connected') {
+          console.log('🎤 [CONNECT VOICE] ✅ Voice chat connected, setting instance');
           setVoiceChat(voiceChat);
         }
       };
       
       voiceChat.onError = (error) => {
-        console.error('Voice mode error:', error);
+        console.error('🎤 [CONNECT VOICE] ❌ Voice mode error:', error);
         alert(`Ошибка голосового режима: ${error}`);
         setVoiceModeStatus('disconnected');
       };
       
       voiceChat.onMessage = (text) => {
+        console.log('🎤 [CONNECT VOICE] 📝 Received message from voice chat:', text);
         // Add assistant message to chat
         const assistantMessage = {
           id: Date.now().toString(),
@@ -469,10 +603,17 @@ function App() {
       };
       
       // Initialize voice chat
+      console.log('🎤 [CONNECT VOICE] Initializing voice chat...');
       await voiceChat.init();
+      console.log('🎤 [CONNECT VOICE] ✅ Voice chat initialization completed');
       
     } catch (error) {
-      console.error('Voice mode connection failed:', error);
+      console.error('🎤 [CONNECT VOICE] ❌ Voice mode connection failed:', error);
+      console.error('🎤 [CONNECT VOICE] Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
       alert(`Не удалось подключиться к Voice Mode: ${error.message}`);
       setVoiceModeStatus('disconnected');
     }

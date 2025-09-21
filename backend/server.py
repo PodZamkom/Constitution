@@ -315,21 +315,26 @@ async def websocket_realtime(websocket: WebSocket):
     """
     WebSocket endpoint for OpenAI Realtime API relay
     """
+    logger.info("🎤 [WEBSOCKET] New WebSocket connection attempt")
     await websocket.accept()
+    logger.info("🎤 [WEBSOCKET] WebSocket connection accepted")
     
     try:
         # Get OpenAI API key
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
+            logger.error("🎤 [WEBSOCKET] ❌ OpenAI API key not configured")
             await websocket.close(code=1008, reason="OpenAI API key not configured")
             return
         
+        logger.info("🎤 [WEBSOCKET] OpenAI API key found, connecting to OpenAI...")
         # Connect to OpenAI Realtime API
         openai_ws_url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17"
         headers = {"Authorization": f"Bearer {api_key}"}
         
+        logger.info(f"🎤 [WEBSOCKET] Connecting to OpenAI: {openai_ws_url}")
         async with websockets.connect(openai_ws_url, extra_headers=headers) as openai_ws:
-            logger.info("Connected to OpenAI Realtime API")
+            logger.info("🎤 [WEBSOCKET] ✅ Connected to OpenAI Realtime API")
             
             # Send session configuration
             session_config = {
@@ -344,29 +349,42 @@ async def websocket_realtime(websocket: WebSocket):
                     "input_audio_transcription": {"model": "whisper-1"}
                 }
             }
+            logger.info("🎤 [WEBSOCKET] Sending session configuration to OpenAI...")
             await openai_ws.send(json.dumps(session_config))
+            logger.info("🎤 [WEBSOCKET] ✅ Session configuration sent")
             
             # Relay messages between client and OpenAI
             async def relay_messages():
+                message_count = 0
                 try:
                     while True:
                         message = await websocket.receive_text()
+                        message_count += 1
+                        logger.info(f"🎤 [WEBSOCKET] 📤 Relaying message #{message_count} to OpenAI")
+                        logger.info(f"🎤 [WEBSOCKET] Message content: {message[:200]}...")
                         await openai_ws.send(message)
+                        logger.info(f"🎤 [WEBSOCKET] ✅ Message #{message_count} sent to OpenAI")
                 except WebSocketDisconnect:
-                    logger.info("Client disconnected")
+                    logger.info("🎤 [WEBSOCKET] Client disconnected")
                 except Exception as e:
-                    logger.error(f"Error relaying client message: {e}")
+                    logger.error(f"🎤 [WEBSOCKET] ❌ Error relaying client message: {e}")
             
             async def relay_openai_messages():
+                message_count = 0
                 try:
                     while True:
                         message = await openai_ws.recv()
+                        message_count += 1
+                        logger.info(f"🎤 [WEBSOCKET] 📥 Received message #{message_count} from OpenAI")
+                        logger.info(f"🎤 [WEBSOCKET] Message content: {message[:200]}...")
                         await websocket.send_text(message)
+                        logger.info(f"🎤 [WEBSOCKET] ✅ Message #{message_count} sent to client")
                 except websockets.exceptions.ConnectionClosed:
-                    logger.info("OpenAI connection closed")
+                    logger.info("🎤 [WEBSOCKET] OpenAI connection closed")
                 except Exception as e:
-                    logger.error(f"Error relaying OpenAI message: {e}")
+                    logger.error(f"🎤 [WEBSOCKET] ❌ Error relaying OpenAI message: {e}")
             
+            logger.info("🎤 [WEBSOCKET] Starting message relay...")
             # Run both relay functions concurrently
             await asyncio.gather(
                 relay_messages(),
@@ -374,7 +392,8 @@ async def websocket_realtime(websocket: WebSocket):
             )
             
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"🎤 [WEBSOCKET] ❌ WebSocket error: {e}")
+        logger.error(f"🎤 [WEBSOCKET] Error details: {type(e).__name__}: {str(e)}")
         try:
             await websocket.close(code=1011, reason="Internal server error")
         except:
