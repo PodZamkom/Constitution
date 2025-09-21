@@ -3,6 +3,10 @@ import './App.css';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
 
+const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' }
+];
+
 // Voice Mode WebRTC Class
 class RealtimeAudioChat {
   constructor() {
@@ -13,12 +17,17 @@ class RealtimeAudioChat {
     this.sessionModel = "gpt-4o-realtime-preview-2024-12-17";
     this.onStatusChange = null;
     this.onError = null;
+    this.localStream = null;
   }
 
   async init() {
     try {
       console.log('Initializing Voice Mode for Алеся...');
-      
+
+      if (this.onStatusChange) {
+        this.onStatusChange('connecting');
+      }
+
       // Get session from backend
       const tokenResponse = await fetch(`${BACKEND_URL}/api/voice/realtime/session`, {
         method: "POST",
@@ -34,12 +43,12 @@ class RealtimeAudioChat {
       if (!tokenResponse.ok) {
         throw new Error(`Session request failed: ${tokenResponse.status}`);
       }
-      
+
       const data = await tokenResponse.json();
       if (!data.client_secret) {
         throw new Error("Failed to get session token");
       }
-      
+
       // Save client_secret and model for subsequent negotiation
       this.sessionToken = data.client_secret;
       this.sessionModel = data.model || this.sessionModel;
@@ -47,7 +56,15 @@ class RealtimeAudioChat {
       console.log('Voice Mode session created successfully');
 
       // Create and set up WebRTC peer connection
-      this.peerConnection = new RTCPeerConnection();
+      this.peerConnection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      this.peerConnection.onconnectionstatechange = () => {
+        const state = this.peerConnection.connectionState;
+        if (state === 'failed' || state === 'disconnected') {
+          if (this.onStatusChange) {
+            this.onStatusChange('disconnected');
+          }
+        }
+      };
       this.setupAudioElement();
       await this.setupLocalAudio();
       this.setupDataChannel();
@@ -56,10 +73,18 @@ class RealtimeAudioChat {
       const offer = await this.peerConnection.createOffer();
       await this.peerConnection.setLocalDescription(offer);
 
+      // Wait for ICE gathering to finish before sending the offer
+      await this.waitForIceGatheringComplete();
+
+      const localSdp = this.peerConnection.localDescription?.sdp;
+      if (!localSdp) {
+        throw new Error('Missing local SDP description');
+      }
+
       // Send offer to backend and get answer
       const response = await fetch(`${BACKEND_URL}/api/voice/realtime/negotiate`, {
         method: "POST",
-        body: offer.sdp,
+        body: localSdp,
         headers: {
           "Content-Type": "application/sdp",
           // Pass client_secret so backend can negotiate with OpenAI Realtime session
@@ -72,7 +97,7 @@ class RealtimeAudioChat {
         throw new Error(`Negotiation failed: ${response.status}`);
       }
 
-      const { sdp: answerSdp } = await response.json();
+      const answerSdp = await response.text();
       const answer = {
         type: "answer",
         sdp: answerSdp
@@ -80,11 +105,11 @@ class RealtimeAudioChat {
 
       await this.peerConnection.setRemoteDescription(answer);
       console.log("WebRTC connection established for Алеся Voice Mode");
-      
+
       if (this.onStatusChange) {
         this.onStatusChange('connected');
       }
-      
+
     } catch (error) {
       console.error("Failed to initialize Алеся audio chat:", error);
       if (this.onError) {
@@ -107,14 +132,16 @@ class RealtimeAudioChat {
   }
 
   async setupLocalAudio() {
-    const stream = await navigator.mediaDevices.getUserMedia({ 
+    const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true
       }
     });
-    
+
+    this.localStream = stream;
+
     stream.getTracks().forEach(track => {
       this.peerConnection.addTrack(track, stream);
     });
@@ -141,21 +168,47 @@ class RealtimeAudioChat {
       }
     };
   }
-  
+
+  async waitForIceGatheringComplete() {
+    if (!this.peerConnection) {
+      return;
+    }
+
+    if (this.peerConnection.iceGatheringState === 'complete') {
+      return;
+    }
+
+    await new Promise((resolve) => {
+      const checkState = () => {
+        if (this.peerConnection.iceGatheringState === 'complete') {
+          this.peerConnection.removeEventListener('icegatheringstatechange', checkState);
+          resolve();
+        }
+      };
+
+      this.peerConnection.addEventListener('icegatheringstatechange', checkState);
+    });
+  }
+
   disconnect() {
     if (this.dataChannel) {
       this.dataChannel.close();
     }
-    
+
     if (this.peerConnection) {
       this.peerConnection.close();
     }
-    
+
+    if (this.localStream) {
+      this.localStream.getTracks().forEach((track) => track.stop());
+      this.localStream = null;
+    }
+
     if (this.audioElement) {
       document.body.removeChild(this.audioElement);
       this.audioElement = null;
     }
-    
+
     if (this.onStatusChange) {
       this.onStatusChange('disconnected');
     }
@@ -381,19 +434,31 @@ function App() {
       alert('Voice Mode недоступен. Проверьте настройки сервера.');
       return;
     }
-    
+
     setVoiceModeStatus('connecting');
-    
-    try {
-      // For now, we'll use a simplified approach
-      // In a real implementation, you would use OpenAI's Realtime API directly
-      alert('Voice Mode в разработке. Пожалуйста, используйте текстовый режим или голосовую запись.');
+
+    const chatInstance = new RealtimeAudioChat();
+    chatInstance.onStatusChange = (status) => {
+      setVoiceModeStatus(status);
+    };
+    chatInstance.onError = (message) => {
+      console.error('Voice mode error:', message);
+      chatInstance.disconnect();
       setVoiceModeStatus('disconnected');
-      
+      setVoiceChat(null);
+    };
+
+    setVoiceChat(chatInstance);
+
+    try {
+      await chatInstance.init();
     } catch (error) {
       console.error('Voice mode connection failed:', error);
-      alert('Не удалось подключиться к Voice Mode. Попробуйте еще раз.');
+      chatInstance.disconnect();
+      setVoiceChat(null);
       setVoiceModeStatus('disconnected');
+      const errorMessage = error instanceof Error ? error.message : 'Неизвестная ошибка';
+      alert(`Не удалось подключиться к Voice Mode: ${errorMessage}`);
     }
   };
 
