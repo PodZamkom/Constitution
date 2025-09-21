@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 import os
 import uvicorn
-import subprocess
 import sys
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     print(f"🚀 Starting server on port {port}")
     
-    # Build frontend first
-    print("📦 Building frontend...")
-    try:
-        subprocess.run(["npm", "install"], cwd="frontend", check=True)
-        subprocess.run(["npm", "run", "build"], cwd="frontend", check=True)
-        print("✅ Frontend built successfully")
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Frontend build failed: {e}")
+    # Check if frontend is built
+    frontend_build_path = "frontend/build"
+    if not os.path.exists(frontend_build_path):
+        print(f"❌ Frontend build not found at {frontend_build_path}")
+        print("Frontend should be built by nixpacks during deployment")
         sys.exit(1)
+    
+    print("✅ Frontend build found, starting backend server...")
     
     # Start backend server
     print("🔧 Starting backend server...")
