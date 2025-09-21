@@ -1,5 +1,8 @@
 {
   "deploy": {
-    "startCommand": "python startup.py"
+    "startCommand": "npm run build && python startup.py"
+  },
+  "build": {
+    "builder": "NIXPACKS"
   }
 }

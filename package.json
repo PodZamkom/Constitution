@@ -1,0 +1,13 @@
+{
+  "name": "belarus-constitution-ai",
+  "version": "1.0.0",
+  "description": "AI Assistant for Belarus Constitution",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build",
+    "start": "python startup.py"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  }
+}

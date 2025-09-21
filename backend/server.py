@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Mount static files
-app.mount("/static", StaticFiles(directory="docs/static"), name="static")
+# Mount static files - serve built frontend
+app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
 
 # MongoDB setup - disabled for Railway deployment
 # MONGO_URL = os.environ.get("MONGO_URL")
@@ -436,6 +436,17 @@ async def chat_stream(request: ChatRequest):
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(generate_stream(), media_type="text/plain")
+
+# Serve React app
+@app.get("/")
+async def serve_frontend():
+    """Serve the React frontend"""
+    return FileResponse("frontend/build/index.html")
+
+@app.get("/{path:path}")
+async def serve_frontend_routes(path: str):
+    """Serve React app for all routes (SPA routing)"""
+    return FileResponse("frontend/build/index.html")
 
 if __name__ == "__main__":
     import uvicorn
