@@ -226,18 +226,26 @@ async def chat(request: ChatRequest):
 async def create_voice_session(request: VoiceSessionRequest):
     """Create voice session with Алеся system prompt"""
     try:
+        logger.info(f"🎤 [VOICE SESSION] Creating session with model: {request.model}, voice: {request.voice}")
+        
         if not VOICE_MODE_AVAILABLE:
+            logger.error("🎤 [VOICE SESSION] ❌ Voice Mode not available")
             raise HTTPException(status_code=503, detail="Voice Mode not available")
         
         client = get_openai_client()
+        if not client:
+            logger.error("🎤 [VOICE SESSION] ❌ OpenAI client not available")
+            raise HTTPException(status_code=500, detail="OpenAI client not available")
         
+        logger.info("🎤 [VOICE SESSION] Creating OpenAI Realtime session...")
         # Create session with custom instructions
         session = client.beta.realtime.sessions.create(
             model=request.model,
             voice=request.voice,
-            instructions="Ты консультант по Конституции Республики Беларусь. Отвечай только по Конституции 2022 года, всегда указывай номер статьи. Если вопрос не относится к Конституции — вежливо отказывай."
+            instructions="Ты Алеся - AI-ассистент по Конституции Республики Беларусь. Отвечай на вопросы согласно Конституции РБ редакции 2022 года. Говори дружелюбно и профессионально."
         )
         
+        logger.info(f"🎤 [VOICE SESSION] ✅ Session created: {session.id}")
         return VoiceSessionResponse(
             session_id=session.id,
             client_secret=session.client_secret.value
@@ -245,7 +253,7 @@ async def create_voice_session(request: VoiceSessionRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error creating voice session: {e}")
+        logger.error(f"🎤 [VOICE SESSION] ❌ Error creating voice session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/transcribe")

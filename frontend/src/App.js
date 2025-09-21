@@ -192,9 +192,11 @@ class RealtimeAudioChat {
       }
       
       console.log('🎤 [AUDIO SETUP] Requesting microphone access...');
-      // Get user media with proper audio constraints
+      // Get user media with proper audio constraints for OpenAI Realtime API
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
+          sampleRate: 24000,  // OpenAI Realtime API requires 24kHz
+          channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true
@@ -205,9 +207,11 @@ class RealtimeAudioChat {
       console.log('🎤 [AUDIO SETUP] Media stream tracks:', this.mediaStream.getTracks().length);
       console.log('🎤 [AUDIO SETUP] Audio track settings:', this.mediaStream.getAudioTracks()[0]?.getSettings());
 
-      // Set up AudioContext for processing
+      // Set up AudioContext for processing with 24kHz sample rate
       console.log('🎤 [AUDIO SETUP] Creating AudioContext...');
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+        sampleRate: 24000  // OpenAI Realtime API requires 24kHz
+      });
       
       console.log('🎤 [AUDIO SETUP] AudioContext state:', this.audioContext.state);
       console.log('🎤 [AUDIO SETUP] AudioContext sample rate:', this.audioContext.sampleRate);
@@ -216,9 +220,9 @@ class RealtimeAudioChat {
       console.log('🎤 [AUDIO SETUP] Creating audio source...');
       const source = this.audioContext.createMediaStreamSource(this.mediaStream);
       
-      // Create ScriptProcessorNode for audio processing
+      // Create ScriptProcessorNode for audio processing (2400 samples = 0.1s at 24kHz)
       console.log('🎤 [AUDIO SETUP] Creating ScriptProcessorNode...');
-      const processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+      const processor = this.audioContext.createScriptProcessor(2400, 1, 1);
       
       let audioChunkCount = 0;
       processor.onaudioprocess = (event) => {
@@ -333,7 +337,7 @@ class RealtimeAudioChat {
         floatData[i] = audioData[i] / 32768.0;
       }
       
-      // Create audio buffer
+      // Create audio buffer with 24kHz sample rate
       const audioBuffer = this.audioContext.createBuffer(1, floatData.length, 24000);
       audioBuffer.copyToChannel(floatData, 0);
       
