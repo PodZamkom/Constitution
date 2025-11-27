@@ -920,21 +920,21 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 1.5rem;
-  max-width: 600px;
+  max-width: 650px;
   width: 100%;
 }
 
 /* Square avatar wrapper */
 .voice-avatar-wrapper {
   width: 100%;
-  max-width: 450px;
+  max-width: 550px;
   display: flex;
   justify-content: center;
 }
 
 .voice-avatar-square {
   width: 100%;
-  max-width: 450px;
+  max-width: 550px;
   aspect-ratio: 1;
   border-radius: 20px;
   overflow: hidden;
@@ -963,7 +963,7 @@ body {
   border-radius: 15px;
   padding: 1.5rem 2rem;
   width: 100%;
-  max-width: 450px;
+  max-width: 550px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
   border: 2px solid rgba(206, 17, 38, 0.2);
   text-align: center;
