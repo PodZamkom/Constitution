@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: constitution-backend
+    restart: unless-stopped
+    ports:
+      - "8100:8000"
+    environment:
+      - PORT=8000
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - HTTPS_PROXY=http://user340699:671nvc@31.57.176.147:3636
+      - http_proxy=http://user340699:671nvc@31.57.176.147:3636
+      - https_proxy=http://user340699:671nvc@31.57.176.147:3636
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./backend:/app/backend
+      - ./docs:/app/docs
+    networks:
+      - constitution-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - REACT_APP_BACKEND_URL=https://constitution.of.by
+    container_name: constitution-frontend
+    restart: unless-stopped
+    ports:
+      - "3100:80"
+    depends_on:
+      - backend
+    networks:
+      - constitution-network
+
+networks:
+  constitution-network:
+    driver: bridge
