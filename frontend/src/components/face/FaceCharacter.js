@@ -96,7 +96,7 @@ const FaceCharacter = forwardRef(({ isSpeaking, audioLevel }, ref) => {
       return new VRMLoaderPlugin(parser);
     });
 
-    const modelUrl = 'https://raw.githubusercontent.com/vrm-c/vrm-specification/master/samples/VRM1_Constraint_Twist/vrm/VRM1_Constraint_Twist_Sample.vrm';
+    const modelUrl = 'https://raw.githubusercontent.com/vrm-c/vrm-specification/master/samples/VRM1_Constraint_Twist_Sample/vrm/VRM1_Constraint_Twist_Sample.vrm';
     
     loader.load(
       modelUrl,
