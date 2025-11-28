@@ -23,6 +23,7 @@ function MainPage() {
   const [isListening, setIsListening] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [voiceError, setVoiceError] = useState(null);
+  const [shouldAutoListen, setShouldAutoListen] = useState(false);
   const geminiClientRef = useRef(null);
   const faceCharacterRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -208,14 +209,12 @@ function MainPage() {
 
   const handleStartListening = () => {
     if (!isVoiceConnected) {
-      toast.error('Сначала подключитесь к серверу');
       return;
     }
 
     if (geminiClientRef.current) {
       geminiClientRef.current.startListening();
       setIsListening(true);
-      toast.success('Микрофон активирован');
     }
   };
 
@@ -223,7 +222,6 @@ function MainPage() {
     if (geminiClientRef.current) {
       geminiClientRef.current.stopListening();
       setIsListening(false);
-      toast.info('Микрофон отключен');
     }
   };
 
@@ -249,18 +247,7 @@ function MainPage() {
     setVoiceError(errorMsg);
     toast.error(errorMsg);
     setIsConnecting(false);
-  };
-
-  const handleSendTestMessage = () => {
-    if (!isVoiceConnected) {
-      toast.error('Сначала подключитесь к серверу');
-      return;
-    }
-    
-    if (geminiClientRef.current) {
-      geminiClientRef.current.sendTextMessage('Привет! Расскажи коротко о себе.');
-      toast.success('Тестовое сообщение отправлено');
-    }
+    setShouldAutoListen(false);
   };
 
   const handleSwitchToTextMode = () => {
@@ -277,6 +264,13 @@ function MainPage() {
       handleVoiceDisconnect();
     }
   }, [voiceMode, handleVoiceDisconnect]);
+  
+  useEffect(() => {
+    if (isVoiceConnected && shouldAutoListen && !isListening) {
+      handleStartListening();
+      setShouldAutoListen(false);
+    }
+  }, [isVoiceConnected, shouldAutoListen, isListening]);
 
   useEffect(() => {
     return () => {
@@ -305,6 +299,15 @@ function MainPage() {
       default:
         return 'Отключено';
     }
+  };
+
+  const toggleVoiceSession = async () => {
+    if (isVoiceConnected || isListening) {
+      handleVoiceDisconnect();
+      return;
+    }
+    setShouldAutoListen(true);
+    await handleVoiceConnect();
   };
 
   return (
@@ -381,33 +384,19 @@ function MainPage() {
               </div>
 
               <div className="voice-controls-grid">
-                {!isVoiceConnected ? (
-                  <button
-                    className="voice-connect-btn"
-                    onClick={handleVoiceConnect}
-                    disabled={isConnecting || !capabilities.voice_mode}
-                  >
-                    {capabilities.voice_mode ? (isConnecting ? 'Подключаемся...' : 'Подключиться к серверу') : 'Голосовой режим недоступен'}
-                  </button>
-                ) : (
-                  <>
-                    {!isListening ? (
-                      <button className="voice-connect-btn" onClick={handleStartListening}>
-                        Включить микрофон
-                      </button>
-                    ) : (
-                      <button className="voice-disconnect-btn" onClick={handleStopListening}>
-                        Выключить микрофон
-                      </button>
-                    )}
-                    <button className="voice-disconnect-btn" onClick={handleVoiceDisconnect}>
-                      Отключиться
-                    </button>
-                    <button className="voice-connect-btn" onClick={handleSendTestMessage}>
-                      🧪 Тест (текст)
-                    </button>
-                  </>
-                )}
+                <button
+                  className={isVoiceConnected || isListening ? 'voice-disconnect-btn' : 'voice-connect-btn'}
+                  onClick={toggleVoiceSession}
+                  disabled={isConnecting || !capabilities.voice_mode}
+                >
+                  {capabilities.voice_mode
+                    ? isVoiceConnected || isListening
+                      ? 'Выключить голосовой режим'
+                      : isConnecting
+                        ? 'Подключаемся...'
+                        : 'Включить голосовой режим'
+                    : 'Голосовой режим недоступен'}
+                </button>
               </div>
               <p className="voice-hint">
                 💡 Можете перебивать ассистента в любой момент

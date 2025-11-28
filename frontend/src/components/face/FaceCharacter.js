@@ -49,12 +49,12 @@ const FaceCharacter = forwardRef(({ isSpeaking, audioLevel }, ref) => {
 
     // Создаем камеру
     const camera = new THREE.PerspectiveCamera(
-      30,
+      22,
       container.clientWidth / container.clientHeight,
       0.1,
       20
     );
-    camera.position.set(0.0, 1.25, 1.8);
+    camera.position.set(0.0, 1.45, 1.0);
     cameraRef.current = camera;
 
     // Создаем рендерер
@@ -77,12 +77,12 @@ const FaceCharacter = forwardRef(({ isSpeaking, audioLevel }, ref) => {
 
     // Добавляем OrbitControls
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0.0, 1.35, 0.0);
+    controls.target.set(0.0, 1.45, 0.0);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.screenSpacePanning = false;
     controls.minDistance = 0.5;
-    controls.maxDistance = 5.0;
+    controls.maxDistance = 1.5;
     controls.maxPolarAngle = Math.PI / 2;
     controls.update();
     controlsRef.current = controls;

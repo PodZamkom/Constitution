@@ -927,14 +927,14 @@ body {
 /* Square avatar wrapper */
 .voice-avatar-wrapper {
   width: 100%;
-  max-width: 640px;
+  max-width: 720px;
   display: flex;
   justify-content: center;
 }
 
 .voice-avatar-square {
   width: 100%;
-  max-width: 640px;
+  max-width: 720px;
   aspect-ratio: 1;
   border-radius: 20px;
   overflow: hidden;
@@ -963,7 +963,7 @@ body {
   border-radius: 15px;
   padding: 1.5rem 2rem;
   width: 100%;
-  max-width: 550px;
+  max-width: 720px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
   border: 2px solid rgba(206, 17, 38, 0.2);
   text-align: center;
@@ -1081,16 +1081,16 @@ body {
   }
   
   .voice-avatar-wrapper {
-    max-width: 350px;
+    max-width: 360px;
   }
   
   .voice-avatar-square {
-    max-width: 350px;
+    max-width: 360px;
   }
   
   .voice-mode-controls-centered {
     padding: 1rem 1.5rem;
-    max-width: 350px;
+    max-width: 360px;
   }
 }
 
