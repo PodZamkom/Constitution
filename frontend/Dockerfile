@@ -7,10 +7,13 @@ WORKDIR /app
 COPY package.json ./
 COPY package-lock.json* yarn.lock* ./
 
-# Install dependencies
-RUN if [ -f yarn.lock ]; then yarn install --frozen-lockfile; \
-    elif [ -f package-lock.json ]; then npm ci; \
-    else yarn install; \
+# Install dependencies (allow legacy peer deps to satisfy CRA-era packages)
+RUN if [ -f yarn.lock ]; then \
+      yarn install --frozen-lockfile; \
+    elif [ -f package-lock.json ]; then \
+      npm ci --legacy-peer-deps; \
+    else \
+      yarn install; \
     fi
 
 # Copy source code
@@ -41,4 +44,3 @@ RUN echo 'server { \
 EXPOSE 80
 
 CMD ["nginx", "-g", "daemon off;"]
-
