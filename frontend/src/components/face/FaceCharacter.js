@@ -84,6 +84,9 @@ const FaceCharacter = forwardRef(({ isSpeaking, audioLevel }, ref) => {
     controls.minDistance = 0.5;
     controls.maxDistance = 1.5;
     controls.maxPolarAngle = Math.PI / 2;
+    controls.enableRotate = false; // фиксируем ракурс
+    controls.enableZoom = false;
+    controls.enablePan = false;
     controls.update();
     controlsRef.current = controls;
 
@@ -93,7 +96,7 @@ const FaceCharacter = forwardRef(({ isSpeaking, audioLevel }, ref) => {
       return new VRMLoaderPlugin(parser);
     });
 
-    const modelUrl = 'https://raw.githubusercontent.com/vrm-c/vrm-specification/master/samples/Seed-san/vrm/Seed-san.vrm';
+    const modelUrl = 'https://raw.githubusercontent.com/vrm-c/vrm-specification/master/samples/VRM1_Constraint_Twist/vrm/VRM1_Constraint_Twist_Sample.vrm';
     
     loader.load(
       modelUrl,

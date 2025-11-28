@@ -946,6 +946,18 @@ body {
   position: relative;
 }
 
+.voice-avatar-square::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url('https://customer-assets.emergentagent.com/job_belarus-constitution/artifacts/zbmwau2o_1613443720_6-p-fon-dlya-prezentatsii-pro-belarus-10.jpg');
+  background-size: cover;
+  background-position: center;
+  filter: blur(12px);
+  transform: scale(1.08);
+  z-index: 0;
+}
+
 .voice-avatar-square .face-character-container {
   border: none;
   border-radius: 0;
@@ -954,6 +966,8 @@ body {
   max-height: 100%;
   width: 100%;
   height: 100%;
+  position: relative;
+  z-index: 1;
 }
 
 /* Voice controls centered below avatar */
