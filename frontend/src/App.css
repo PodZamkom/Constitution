@@ -103,10 +103,12 @@ body {
   padding: 1.5rem; /* Reduced from 2rem */
   gap: 1.5rem; /* Reduced from 2rem */
   max-height: 75vh; /* 25% reduction from 100vh */
+  align-items: stretch; /* Keep panels equal height */
 }
 
 .chat-container {
-  flex: 1;
+  /* Жестко держим ширину на десктопе, чтобы чат не "сжимался" после отправки сообщения */
+  flex: 0 0 65%;
   background: rgba(255, 255, 255, 0.95);
   border-radius: 15px;
   display: flex;
@@ -115,6 +117,7 @@ body {
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
   border: 2px solid rgba(206, 17, 38, 0.2);
   max-height: 70vh; /* Reduced height */
+  min-width: clamp(720px, 70vw, 950px); /* стабильная ширина на десктопе */
 }
 
 .chat-messages {
@@ -632,6 +635,7 @@ body {
   .main-content {
     flex-direction: column;
     padding: 1rem;
+    align-items: center;
   }
 
   .avatar-container {
@@ -698,6 +702,7 @@ body {
     max-height: calc(100vh - 140px); /* Ensure space for header + controls */
     display: flex;
     flex-direction: column;
+    min-width: auto; /* Reset desktop min-width */
   }
 
   .chat-messages {
@@ -909,32 +914,32 @@ body {
 .voice-mode-main {
   flex: 1;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 1.5rem;
-  min-height: calc(100vh - 100px);
+  padding: 1rem 1.5rem 1.5rem;
+  min-height: calc(100vh - 140px);
 }
 
 .voice-mode-container {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1.5rem;
-  max-width: 720px;
+  gap: 1.2rem;
+  max-width: 540px;
   width: 100%;
 }
 
 /* Square avatar wrapper */
 .voice-avatar-wrapper {
   width: 100%;
-  max-width: 720px;
+  max-width: 500px;
   display: flex;
   justify-content: center;
 }
 
 .voice-avatar-square {
   width: 100%;
-  max-width: 720px;
+  max-width: 500px;
   aspect-ratio: 1;
   border-radius: 20px;
   overflow: hidden;
@@ -977,7 +982,7 @@ body {
   border-radius: 15px;
   padding: 1.5rem 2rem;
   width: 100%;
-  max-width: 720px;
+  max-width: 560px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
   border: 2px solid rgba(206, 17, 38, 0.2);
   text-align: center;
@@ -1092,6 +1097,7 @@ body {
 @media (max-width: 768px) {
   .voice-mode-main {
     padding: 1rem;
+    min-height: calc(100vh - 100px);
   }
   
   .voice-avatar-wrapper {

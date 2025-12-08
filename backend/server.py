@@ -143,40 +143,36 @@ async def get_capabilities():
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    try:
-        logger.info(f"User message: {request.message}")
+    logger.info(f"User message: {request.message}")
 
-        model = genai.GenerativeModel(
-            model_name=TEXT_MODEL_NAME,
-            system_instruction=SYSTEM_PROMPT
+    model = genai.GenerativeModel(
+        model_name=TEXT_MODEL_NAME,
+        system_instruction=SYSTEM_PROMPT
+    )
+
+    ai_response = None
+
+    try:
+        chat_session = model.start_chat(history=[])
+        response = chat_session.send_message(request.message)
+        ai_response = response.text
+        logger.info(f"Assistant response: {ai_response}")
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Gemini API error: {error_msg}")
+        # Фоллбек без ошибки, чтобы фронт не падал при 403/429
+        ai_response = (
+            "В данный момент основной сервис Google Gemini временно недоступен. "
+            "Кратко по Конституции РБ: раздел II (ст. 21–63) — права и свободы, "
+            "ст. 6 — разделение властей, ст. 17 — два гос. языка, ст. 79–89 — Президент. "
+            "Попробуйте задать вопрос ещё раз немного позже."
         )
 
-        # Handle potential blocked regions/quota issues gracefully
-        try:
-            chat_session = model.start_chat(history=[])
-            response = chat_session.send_message(request.message)
-            ai_response = response.text
-            logger.info(f"Assistant response: {ai_response}")
-
-            return ChatResponse(
-                response=ai_response,
-                session_id=request.session_id,
-                message_id=str(uuid.uuid4())
-            )
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Gemini API error: {error_msg}")
-            if "429" in error_msg or "Quota" in error_msg:
-                raise HTTPException(status_code=429, detail="Превышен лимит запросов или регион заблокирован Google.")
-            if "User location is not supported" in error_msg:
-                raise HTTPException(status_code=403, detail="Сервер находится в регионе, заблокированном Google. Требуется прокси.")
-            raise e
-
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        logger.error(f"Error in chat: {e}")
-        raise HTTPException(status_code=500, detail=f"Ошибка сервера: {str(e)}")
+    return ChatResponse(
+        response=ai_response,
+        session_id=request.session_id,
+        message_id=str(uuid.uuid4())
+    )
 
 # WebSocket for Real-time Voice (Gemini Live)
 @app.websocket("/ws/gemini-live")

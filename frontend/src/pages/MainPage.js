@@ -3,9 +3,25 @@ import { toast } from 'sonner';
 import '../App.css';
 import '../styles/FacePage.css';
 import FaceCharacter from '../components/face/FaceCharacter';
-import GeminiLiveClient from '../components/face/GeminiLiveClient';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+// Конфигурация Vapi.ai
+const VAPI_PUBLIC_KEY = '93241095-1999-4ac7-8030-c29bd6e9cca9';
+const VAPI_ASSISTANT_ID = '4e444056-609a-4455-93ab-cbba9d620314';
+
+const resolveBackendUrl = () => {
+  if (process.env.REACT_APP_BACKEND_URL) {
+    return process.env.REACT_APP_BACKEND_URL;
+  }
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
+  }
+  if (process.env.NODE_ENV === 'development') {
+    return 'http://localhost:8001';
+  }
+  return '';
+};
+
+const BACKEND_URL = resolveBackendUrl();
 
 function MainPage() {
   const [messages, setMessages] = useState([]);
@@ -17,17 +33,20 @@ function MainPage() {
   const [mediaRecorder, setMediaRecorder] = useState(null);
   const [, setRecordedAudio] = useState(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [voiceModeStatus, setVoiceModeStatus] = useState('disconnected'); // disconnected, connecting, connected, ready
+  const [voiceModeStatus, setVoiceModeStatus] = useState('disconnected'); // disconnected, connecting, connected
   const [capabilities, setCapabilities] = useState({});
   const [audioLevel, setAudioLevel] = useState(0);
   const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false); // AI говорит
   const [isConnecting, setIsConnecting] = useState(false);
   const [voiceError, setVoiceError] = useState(null);
-  const [shouldAutoListen, setShouldAutoListen] = useState(false);
-  const geminiClientRef = useRef(null);
+  
+  // Refs
+  const vapiRef = useRef(null);
   const faceCharacterRef = useRef(null);
   const messagesEndRef = useRef(null);
-  const isVoiceConnected = voiceModeStatus === 'connected' || voiceModeStatus === 'ready';
+  
+  const isVoiceConnected = voiceModeStatus === 'connected';
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -41,6 +60,99 @@ function MainPage() {
     // Load chat history and capabilities
     // loadChatHistory(); // History temporarily disabled for clean start
     loadCapabilities();
+  }, []);
+
+  // Инициализация Vapi при переключении в голосовой режим
+  useEffect(() => {
+    if (voiceMode && !vapiRef.current) {
+      // Проверяем что Vapi SDK загружен
+      if (typeof window.Vapi === 'undefined') {
+        console.error('Vapi SDK не загружен!');
+        setVoiceError('Vapi SDK не загружен. Перезагрузите страницу.');
+        return;
+      }
+
+      // Создаем экземпляр Vapi
+      const vapi = new window.Vapi(VAPI_PUBLIC_KEY);
+      vapiRef.current = vapi;
+      console.log('✅ Vapi инициализирован');
+
+      // Подписываемся на события Vapi
+      
+      // Звонок начался
+      vapi.on('call-start', () => {
+        console.log('📞 Vapi: звонок начался');
+        setVoiceModeStatus('connected');
+        setIsListening(true);
+        setVoiceError(null);
+        setIsConnecting(false);
+        toast.success('Голосовой режим активирован');
+      });
+
+      // Звонок завершен
+      vapi.on('call-end', () => {
+        console.log('📞 Vapi: звонок завершен');
+        setVoiceModeStatus('disconnected');
+        setIsListening(false);
+        setIsSpeaking(false);
+        setAudioLevel(0);
+        setIsConnecting(false);
+        toast.info('Голосовой режим отключен');
+      });
+
+      // AI начал говорить
+      vapi.on('speech-start', () => {
+        console.log('🔊 Vapi: AI начал говорить');
+        setIsSpeaking(true);
+        setIsListening(false);
+      });
+
+      // AI закончил говорить
+      vapi.on('speech-end', () => {
+        console.log('🔊 Vapi: AI закончил говорить');
+        setIsSpeaking(false);
+        setIsListening(true);
+      });
+
+      // Уровень громкости (для lip sync)
+      vapi.on('volume-level', (level) => {
+        setAudioLevel(level);
+        if (faceCharacterRef.current) {
+          faceCharacterRef.current.setAudioLevel(level);
+        }
+      });
+
+      // Ошибка
+      vapi.on('error', (err) => {
+        console.error('❌ Vapi ошибка:', err);
+        const errorMsg = err?.message || err?.error || 'Ошибка голосового режима';
+        setVoiceError(errorMsg);
+        setIsConnecting(false);
+        toast.error(`Ошибка: ${errorMsg}`);
+      });
+
+      // Сообщение (для отладки)
+      vapi.on('message', (message) => {
+        console.log('📩 Vapi сообщение:', message);
+      });
+    }
+
+    // Cleanup при выходе из голосового режима
+    return () => {
+      if (!voiceMode && vapiRef.current) {
+        console.log('🧹 Очистка Vapi при выходе из голосового режима...');
+        vapiRef.current.stop();
+      }
+    };
+  }, [voiceMode]);
+
+  // Cleanup при размонтировании компонента
+  useEffect(() => {
+    return () => {
+      if (vapiRef.current) {
+        vapiRef.current.stop();
+      }
+    };
   }, []);
 
   const loadCapabilities = async () => {
@@ -116,9 +228,7 @@ function MainPage() {
   };
 
   const startRecording = async () => {
-    // Legacy text-to-speech recording logic kept for text mode if needed, 
-    // основной упор на обновленный голосовой режим.
-    // ... implementation preserved for text mode input ...
+    // Legacy text-to-speech recording logic kept for text mode if needed
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
           audio: {
@@ -146,8 +256,6 @@ function MainPage() {
           setRecordedAudio(audioBlob);
           stream.getTracks().forEach(track => track.stop());
           
-          // Placeholder: We don't have a transcribe endpoint in new backend yet, 
-          // so we just alert or use direct text.
           alert("Голосовой ввод в текстовом режиме временно недоступен. Пожалуйста, используйте Голосовой режим.");
         };
         
@@ -168,115 +276,92 @@ function MainPage() {
     }
   };
 
-  const handleVoiceDisconnect = useCallback(() => {
-    if (geminiClientRef.current) {
-      geminiClientRef.current.disconnect();
-    }
-    setVoiceModeStatus('disconnected');
-    setIsListening(false);
-    setAudioLevel(0);
-    setVoiceError(null);
-    setIsConnecting(false);
-  }, []);
-
-  const handleVoiceConnect = async () => {
-    if (!capabilities.voice_mode) {
-      toast.error('Голосовой режим недоступен. Проверьте настройки сервера.');
+  // Начать/завершить голосовой звонок через Vapi
+  const toggleVoiceSession = async () => {
+    if (isVoiceConnected) {
+      // Завершить звонок
+      if (vapiRef.current) {
+        console.log('📞 Завершаем звонок...');
+        vapiRef.current.stop();
+      }
       return;
     }
 
-    if (!geminiClientRef.current) {
-      setVoiceError('Клиент голосового режима не инициализирован');
-      return;
-    }
-
-    setIsConnecting(true);
-    setVoiceModeStatus('connecting');
-    setVoiceError(null);
-
+    // Начать звонок
     try {
-      await geminiClientRef.current.connect();
-      toast.success('Подключено к голосовому режиму');
-    } catch (error) {
-      const errorMsg = error?.message || 'Ошибка подключения';
+      if (!vapiRef.current) {
+        // Инициализируем Vapi если еще не создан
+        if (typeof window.Vapi === 'undefined') {
+          setVoiceError('Vapi SDK не загружен. Перезагрузите страницу.');
+          toast.error('Vapi SDK не загружен');
+          return;
+        }
+        const vapi = new window.Vapi(VAPI_PUBLIC_KEY);
+        vapiRef.current = vapi;
+        
+        // Подписка на события (дублируем если не было инициализации)
+        vapi.on('call-start', () => {
+          setVoiceModeStatus('connected');
+          setIsListening(true);
+          setVoiceError(null);
+          setIsConnecting(false);
+          toast.success('Голосовой режим активирован');
+        });
+        vapi.on('call-end', () => {
+          setVoiceModeStatus('disconnected');
+          setIsListening(false);
+          setIsSpeaking(false);
+          setAudioLevel(0);
+          setIsConnecting(false);
+        });
+        vapi.on('speech-start', () => {
+          setIsSpeaking(true);
+          setIsListening(false);
+        });
+        vapi.on('speech-end', () => {
+          setIsSpeaking(false);
+          setIsListening(true);
+        });
+        vapi.on('volume-level', (level) => {
+          setAudioLevel(level);
+          if (faceCharacterRef.current) {
+            faceCharacterRef.current.setAudioLevel(level);
+          }
+        });
+        vapi.on('error', (err) => {
+          const errorMsg = err?.message || err?.error || 'Ошибка голосового режима';
+          setVoiceError(errorMsg);
+          setIsConnecting(false);
+          toast.error(`Ошибка: ${errorMsg}`);
+        });
+      }
+
+      console.log('📞 Начинаем звонок...');
+      setIsConnecting(true);
+      setVoiceError(null);
+      
+      await vapiRef.current.start(VAPI_ASSISTANT_ID);
+      
+    } catch (err) {
+      console.error('Ошибка при запуске звонка:', err);
+      const errorMsg = err.message || 'Не удалось начать звонок';
       setVoiceError(errorMsg);
-      setVoiceModeStatus('disconnected');
-      toast.error(`Ошибка подключения: ${errorMsg}`);
-    } finally {
       setIsConnecting(false);
+      toast.error(`Ошибка: ${errorMsg}`);
     }
-  };
-
-  const handleStartListening = () => {
-    if (!isVoiceConnected) {
-      return;
-    }
-
-    if (geminiClientRef.current) {
-      geminiClientRef.current.startListening();
-      setIsListening(true);
-    }
-  };
-
-  const handleStopListening = () => {
-    if (geminiClientRef.current) {
-      geminiClientRef.current.stopListening();
-      setIsListening(false);
-    }
-  };
-
-  const handleAudioLevel = (level) => {
-    setAudioLevel(level);
-    if (faceCharacterRef.current) {
-      faceCharacterRef.current.setAudioLevel(level);
-    }
-  };
-
-  const handleStatusChange = (status) => {
-    if (status === 'connected' || status === 'ready') {
-      setVoiceModeStatus(status);
-    } else if (status === 'disconnected') {
-      setVoiceModeStatus('disconnected');
-      setIsListening(false);
-      setAudioLevel(0);
-    }
-    setIsConnecting(false);
-  };
-
-  const handleVoiceError = (errorMsg) => {
-    setVoiceError(errorMsg);
-    toast.error(errorMsg);
-    setIsConnecting(false);
-    setShouldAutoListen(false);
   };
 
   const handleSwitchToTextMode = () => {
     setVoiceMode(false);
-    handleVoiceDisconnect();
+    // Завершаем звонок если идет
+    if (vapiRef.current && isVoiceConnected) {
+      vapiRef.current.stop();
+    }
   };
 
   const handleSwitchToVoiceMode = () => {
     setVoiceMode(true);
   };
-
-  useEffect(() => {
-    if (!voiceMode) {
-      handleVoiceDisconnect();
-    }
-  }, [voiceMode, handleVoiceDisconnect]);
-  
-  useEffect(() => {
-    if (isVoiceConnected && shouldAutoListen && !isListening) {
-      handleStartListening();
-      setShouldAutoListen(false);
-    }
-  }, [isVoiceConnected, shouldAutoListen, isListening]);
-
-  useEffect(() => {
-    return () => {
-      handleVoiceDisconnect();
-    };
-  }, [handleVoiceDisconnect]);
 
   const playTTS = async (text) => {
     // Simple browser TTS for now
@@ -289,26 +374,14 @@ function MainPage() {
 
   const getVoiceModeStatusText = () => {
     if (isConnecting) return 'Подключение...';
+    if (isSpeaking) return 'AI говорит...';
     if (isListening) return 'Слушаю вас';
-
-    switch (voiceModeStatus) {
-      case 'connected':
-        return 'Подключено';
-      case 'ready':
-        return 'Готов к разговору';
-      default:
-        return 'Отключено';
-    }
+    if (isVoiceConnected) return 'Подключено';
+    return 'Отключено';
   };
 
-  const toggleVoiceSession = async () => {
-    if (isVoiceConnected || isListening) {
-      handleVoiceDisconnect();
-      return;
-    }
-    setShouldAutoListen(true);
-    await handleVoiceConnect();
-  };
+  // Проверка доступности Vapi SDK
+  const isVapiAvailable = typeof window !== 'undefined' && typeof window.Vapi !== 'undefined';
 
   return (
     <div className="app">
@@ -352,7 +425,7 @@ function MainPage() {
               <div className="voice-avatar-square">
                 <FaceCharacter
                   ref={faceCharacterRef}
-                  isSpeaking={isVoiceConnected && !isListening}
+                  isSpeaking={isSpeaking}
                   audioLevel={audioLevel}
                 />
               </div>
@@ -385,17 +458,17 @@ function MainPage() {
 
               <div className="voice-controls-grid">
                 <button
-                  className={isVoiceConnected || isListening ? 'voice-disconnect-btn' : 'voice-connect-btn'}
+                  className={isVoiceConnected ? 'voice-disconnect-btn' : 'voice-connect-btn'}
                   onClick={toggleVoiceSession}
-                  disabled={isConnecting || !capabilities.voice_mode}
+                  disabled={isConnecting || !isVapiAvailable}
                 >
-                  {capabilities.voice_mode
-                    ? isVoiceConnected || isListening
+                  {!isVapiAvailable
+                    ? 'Загрузка...'
+                    : isVoiceConnected
                       ? 'Выключить голосовой режим'
                       : isConnecting
                         ? 'Подключаемся...'
-                        : 'Включить голосовой режим'
-                    : 'Голосовой режим недоступен'}
+                        : 'Включить голосовой режим'}
                 </button>
               </div>
               <p className="voice-hint">
@@ -403,13 +476,6 @@ function MainPage() {
               </p>
             </div>
           </div>
-
-          <GeminiLiveClient
-            ref={geminiClientRef}
-            onAudioLevel={handleAudioLevel}
-            onStatusChange={handleStatusChange}
-            onError={handleVoiceError}
-          />
         </main>
       ) : (
         <main className="main-content">
