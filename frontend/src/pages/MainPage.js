@@ -65,15 +65,16 @@ function MainPage() {
   // Инициализация Vapi при переключении в голосовой режим
   useEffect(() => {
     if (voiceMode && !vapiRef.current) {
-      // Проверяем что Vapi SDK загружен
-      if (typeof window.Vapi === 'undefined') {
+      // Проверяем что Vapi SDK загружен (UMD bundle создаёт глобальный Vapi)
+      const VapiClass = window.Vapi || (typeof Vapi !== 'undefined' ? Vapi : null);
+      if (!VapiClass) {
         console.error('Vapi SDK не загружен!');
         setVoiceError('Vapi SDK не загружен. Перезагрузите страницу.');
         return;
       }
 
       // Создаем экземпляр Vapi
-      const vapi = new window.Vapi(VAPI_PUBLIC_KEY);
+      const vapi = new VapiClass(VAPI_PUBLIC_KEY);
       vapiRef.current = vapi;
       console.log('✅ Vapi инициализирован');
 
@@ -291,12 +292,13 @@ function MainPage() {
     try {
       if (!vapiRef.current) {
         // Инициализируем Vapi если еще не создан
-        if (typeof window.Vapi === 'undefined') {
+        const VapiClass = window.Vapi || (typeof Vapi !== 'undefined' ? Vapi : null);
+        if (!VapiClass) {
           setVoiceError('Vapi SDK не загружен. Перезагрузите страницу.');
           toast.error('Vapi SDK не загружен');
           return;
         }
-        const vapi = new window.Vapi(VAPI_PUBLIC_KEY);
+        const vapi = new VapiClass(VAPI_PUBLIC_KEY);
         vapiRef.current = vapi;
         
         // Подписка на события (дублируем если не было инициализации)
@@ -380,8 +382,8 @@ function MainPage() {
     return 'Отключено';
   };
 
-  // Проверка доступности Vapi SDK
-  const isVapiAvailable = typeof window !== 'undefined' && typeof window.Vapi !== 'undefined';
+  // Проверка доступности Vapi SDK (UMD создаёт глобальный Vapi)
+  const isVapiAvailable = typeof window !== 'undefined' && (typeof window.Vapi !== 'undefined' || typeof Vapi !== 'undefined');
 
   return (
     <div className="app">
