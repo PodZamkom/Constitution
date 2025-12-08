@@ -132,9 +132,19 @@ function MainPage() {
         toast.error(`Ошибка: ${errorMsg}`);
       });
 
-      // Сообщение (для отладки)
+      // Сообщение (для отладки и транскрипции)
       vapi.on('message', (message) => {
         console.log('📩 Vapi сообщение:', message);
+        
+        // Транскрипция речи пользователя
+        if (message.type === 'transcript' && message.role === 'user') {
+          console.log('🎤 Пользователь сказал:', message.transcript);
+        }
+        
+        // Транскрипция речи AI
+        if (message.type === 'transcript' && message.role === 'assistant') {
+          console.log('🤖 AI сказал:', message.transcript);
+        }
       });
     }
 
