@@ -20,6 +20,8 @@
       Learn how to configure a non-root public URL by running `npm run build`.
     -->
         <title>Алеся — Конституция РБ</title>
+        <!-- Vapi.ai Web SDK - загружается первым для голосового режима -->
+        <script src="https://cdn.jsdelivr.net/npm/@vapi-ai/web/dist/vapi.min.js"></script>
     </head>
     <body>
         <noscript>You need to enable JavaScript to run this app.</noscript>
@@ -101,7 +103,5 @@
                 person_profiles: "identified_only", // or 'always' to create profiles for anonymous users as well
             });
         </script>
-        <!-- Vapi.ai Web SDK для голосового ассистента -->
-        <script src="https://cdn.jsdelivr.net/npm/@vapi-ai/web/dist/vapi.min.js"></script>
     </body>
 </html>
